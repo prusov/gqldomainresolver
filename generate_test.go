@@ -7,6 +7,14 @@ import (
 	gqlast "github.com/vektah/gqlparser/v2/ast"
 )
 
+// makeObject creates a minimal codegen.Object for testing.
+func makeObject(name string, root bool) *codegen.Object {
+	return &codegen.Object{
+		Definition: &gqlast.Definition{Name: name},
+		Root:       root,
+	}
+}
+
 // makeFieldWithPos creates a codegen.Field with a schema file position set.
 func makeFieldWithPos(goName string, obj *codegen.Object, schemaPath string, args ...*codegen.FieldArgument) *codegen.Field {
 	return &codegen.Field{

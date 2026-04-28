@@ -88,39 +88,68 @@ type domainMethodBuild struct {
 }
 
 type domainFileBuild struct {
-	Methods []*domainMethodBuild
-	Objects []*codegen.Object // for generating struct types (XxxResolver struct{})
+	// Root-method emission.
+	MutationStructName string               // e.g., "TodosMutation". Empty when no mutation methods in this file.
+	QueryStructName    string               // e.g., "TodosQuery". Empty when no query methods in this file.
+	MutationMethods    []*domainMethodBuild // methods on MutationStructName
+	QueryMethods       []*domainMethodBuild // methods on QueryStructName
+	EmitMutationStruct bool                 // declare `type <MutationStructName> struct{}` in this file
+	EmitQueryStruct    bool                 // declare `type <QueryStructName> struct{}` in this file
+
+	// Per-object (non-root) resolver emission — unchanged behavior.
+	ObjectMethods []*domainMethodBuild
+	Objects       []*codegen.Object
+}
+
+// domainStructPrefix turns "todos" → "MixinTodos", used to derive the struct
+// names MixinTodosMutation / MixinTodosQuery exposed by the domain package.
+// The "Mixin" lead-in keeps the struct name from starting with the package
+// name (which would trigger revive's package-stutter rule, e.g. todos.TodosMutation).
+func domainStructPrefix(domain string) string {
+	if domain == "" {
+		return ""
+	}
+	return "Mixin" + strings.ToUpper(domain[:1]) + domain[1:]
 }
 
 func renderDomainFile(
 	data *codegen.Data,
 	pkgName string,
 	outFile string,
-	fg *fileGroup,
+	build *domainFileBuild,
 	rw *astRewriter, // nil if package is being created for the first time
 ) error {
-	domainDir := filepath.Dir(outFile)
-	build := &domainFileBuild{Objects: fg.objects}
+	prefix := domainStructPrefix(pkgName)
+	mutationType := prefix + "Mutation"
+	queryType := prefix + "Query"
 
-	for _, df := range fg.fields {
+	for _, m := range build.MutationMethods {
 		impl := ""
-		if df.Object.Root {
-			// rewrite.Rewriter only handles methods with receivers, so free functions
-			// (MutationXxx / QueryXxx) need a custom lookup via go/parser.
-			prefix := "Query"
-			if df.Object.Name == "Mutation" {
-				prefix = "Mutation"
-			}
-			impl = getFreeFuncBody(domainDir, prefix+df.Field.GoFieldName)
-		} else if rw != nil {
-			impl = rw.getMethodBody(receiverTypeName(df), df.Field.GoFieldName)
+		if rw != nil {
+			impl = rw.getMethodBody(mutationType, m.Field.GoFieldName)
 		}
+		m.Implementation = strings.TrimSpace(impl)
+	}
+	for _, m := range build.QueryMethods {
+		impl := ""
+		if rw != nil {
+			impl = rw.getMethodBody(queryType, m.Field.GoFieldName)
+		}
+		m.Implementation = strings.TrimSpace(impl)
+	}
+	for _, m := range build.ObjectMethods {
+		impl := ""
+		if rw != nil {
+			impl = rw.getMethodBody(m.Object.Name+"Resolver", m.Field.GoFieldName)
+		}
+		m.Implementation = strings.TrimSpace(impl)
+	}
 
-		build.Methods = append(build.Methods, &domainMethodBuild{
-			Object:         df.Object,
-			Field:          df.Field,
-			Implementation: strings.TrimSpace(impl),
-		})
+	if len(build.MutationMethods) > 0 {
+		build.MutationStructName = mutationType
+	}
+	if len(build.QueryMethods) > 0 {
+		build.QueryStructName = queryType
 	}
 
 	return templates.Render(templates.Options{
@@ -132,56 +161,8 @@ func renderDomainFile(
 	})
 }
 
-// receiverTypeName returns the receiver type name for rewriter method lookup.
-// Field resolver methods → methods on XxxResolver struct.
-// Query/Mutation → free functions, handled separately via getFreeFuncBody.
-func receiverTypeName(df *domainField) string {
-	if df.Object.Root {
-		return ""
-	}
-	return df.Object.Name + "Resolver"
-}
-
-// getFreeFuncBody extracts the body of a top-level free function (no receiver) from .go files in dir.
-// Used to preserve hand-written implementations across re-generations.
-// Uses ParseFile per file to avoid the deprecated ParseDir/ast.Package APIs.
-func getFreeFuncBody(dir, funcName string) string {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-
-	fset := token.NewFileSet()
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
-			continue
-		}
-		filename := filepath.Join(dir, entry.Name())
-		f, err := gparser.ParseFile(fset, filename, nil, 0)
-		if err != nil {
-			continue
-		}
-		for _, decl := range f.Decls {
-			fn, ok := decl.(*goast.FuncDecl)
-			if !ok || fn.Recv != nil || fn.Name.Name != funcName {
-				continue
-			}
-			src, err := os.ReadFile(filename)
-			if err != nil {
-				return ""
-			}
-			// fn.Body.Lbrace points to '{', so +1 skips it.
-			// fn.Body.Rbrace points to '}', so we stop before it.
-			startOff := fset.Position(fn.Body.Lbrace).Offset + 1
-			endOff := fset.Position(fn.Body.Rbrace).Offset
-			return strings.TrimSpace(string(src[startOff:endOff]))
-		}
-	}
-	return ""
-}
-
 // renderConstructorsFile renders the domain_resolvers.go file in the root resolver package.
-// build is a struct with GeneratedPkg (string), DomainImports ([]string), and Ctors ([]struct{TypeName, Domain string}).
+// build is a struct passed through to constructorsTemplate (see renderDomainConstructors).
 func renderConstructorsFile(data *codegen.Data, outFile string, build any) error {
 	return templates.Render(templates.Options{
 		PackageName: data.Config.Resolver.Package,
@@ -192,15 +173,52 @@ func renderConstructorsFile(data *codegen.Data, outFile string, build any) error
 	})
 }
 
-// constructorsTemplate emits one constructor per non-root domain object:
+// constructorsTemplate emits domain_resolvers.go in the root resolver package.
 //
-//	func (r *Resolver) Todo() generated.TodoResolver { return &todos.TodoResolver{} }
+// Method-promotion layout:
 //
-// The generated package and each domain package are reserved via reserveImport
-// so goimports doesn't strip them.
+//	mutationResolver { Resolver *Resolver; DomainResolvers }
+//	queryResolver    { Resolver *Resolver; DomainResolvers }
+//
+// `Resolver` is a NAMED field (not embedded) on purpose: gqlgen requires
+// per-object constructors like (r *Resolver) Task() generated.TaskResolver
+// to satisfy ResolverRoot, but those methods would shadow the deeper
+// promoted Task(ctx, id) coming from tasks.TasksQuery if *Resolver were
+// embedded — so queryResolver would fail to satisfy generated.QueryResolver.
+// Promoting *Resolver into the wrappers also offers nothing beyond access
+// to user state, which manually written resolvers (e.g., Hello, Welcome)
+// can reach via `r.Resolver.<field>`.
+//
+// DomainResolvers is value-embedded twice — once in Resolver (so user code
+// can call r.CreateTodo() directly) and once in each wrapper (so the methods
+// reach the wrapper at depth 1 unambiguously). Both copies are zero-sized
+// since each per-domain Mutation/Query struct is empty.
 const constructorsTemplate = `
 {{ reserveImport .GeneratedPkg }}
 {{ range $imp := .DomainImports }}{{ reserveImport $imp }}{{ end }}
+
+type DomainResolvers struct {
+{{- range $e := .Embeds }}
+	{{ $e.Domain }}.{{ $e.TypeName }}
+{{- end }}
+}
+
+func (r *Resolver) Mutation() generated.MutationResolver {
+	return &mutationResolver{Resolver: r}
+}
+func (r *Resolver) Query() generated.QueryResolver {
+	return &queryResolver{Resolver: r}
+}
+
+type mutationResolver struct {
+	Resolver *Resolver
+	DomainResolvers
+}
+
+type queryResolver struct {
+	Resolver *Resolver
+	DomainResolvers
+}
 
 {{ range $c := .Ctors }}
 func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
@@ -213,33 +231,44 @@ func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
 //
 // Key design decisions:
 //  1. NO import of graph/generated — interfaces are satisfied structurally (Go duck typing).
-//  2. Query/Mutation → free functions Query{Name}() / Mutation{Name}().
+//  2. Root resolvers → methods on <Domain>Mutation / <Domain>Query structs (embedded
+//     into DomainResolvers in the root package, promoted up through Resolver).
 //  3. Field resolvers → methods on {TypeName}Resolver struct.
-//  4. Existing implementations are restored via rewriter (methods) or getFreeFuncBody (free funcs).
+//  4. Existing implementations are restored via the AST rewriter — method
+//     bodies are looked up by receiver type name on disk and re-emitted verbatim.
 const domainTemplate = `
 {{- reserveImport "context" -}}
 {{- reserveImport "fmt" -}}
 
-{{ range $m := .Methods }}
-{{- if $m.Object.Root }}
-{{- if eq $m.Object.Name "Mutation" }}
-func Mutation{{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
+{{ if .EmitMutationStruct }}
+type {{ .MutationStructName }} struct{}
+{{ end }}
+
+{{ if .EmitQueryStruct }}
+type {{ .QueryStructName }} struct{}
+{{ end }}
+
+{{ range $m := .MutationMethods }}
+func (m *{{ $.MutationStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
 	{{ $m.Implementation }}
 	{{- else }}
-	panic(fmt.Errorf("not implemented: Mutation{{ $m.Field.GoFieldName }}"))
+	panic(fmt.Errorf("not implemented: Mutation.{{ $m.Field.GoFieldName }}"))
 	{{- end }}
 }
-{{- else }}
-func Query{{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
+{{ end }}
+
+{{ range $m := .QueryMethods }}
+func (q *{{ $.QueryStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
 	{{ $m.Implementation }}
 	{{- else }}
-	panic(fmt.Errorf("not implemented: Query{{ $m.Field.GoFieldName }}"))
+	panic(fmt.Errorf("not implemented: Query.{{ $m.Field.GoFieldName }}"))
 	{{- end }}
 }
-{{- end }}
-{{- else }}
+{{ end }}
+
+{{ range $m := .ObjectMethods }}
 func (r *{{ ucFirst $m.Object.Name }}Resolver) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
 	{{ $m.Implementation }}
@@ -247,7 +276,6 @@ func (r *{{ ucFirst $m.Object.Name }}Resolver) {{ $m.Field.GoFieldName }}{{ $m.F
 	panic(fmt.Errorf("not implemented: {{ $m.Object.Name }}.{{ $m.Field.GoFieldName }}"))
 	{{- end }}
 }
-{{- end }}
 {{ end }}
 
 {{ range $obj := .Objects }}
