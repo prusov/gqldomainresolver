@@ -18,9 +18,10 @@ func (p *Plugin) Implement(prevImpl string, field *codegen.Field) string {
 
 	domain := extractDomain(field.Position.Src.Name)
 	if domain == "" {
-		// Root schema or invalid directory name.
-		// Return "" → resolvergen will generate a panic stub.
-		return ""
+		// Root schema or invalid directory name — no domain package to delegate to.
+		// Once ImplementationRender is set, gqlgen no longer falls back to its default
+		// panic stub for empty results, so we must emit it ourselves.
+		return panicStub(field)
 	}
 
 	// Register domain package import explicitly via CurrentImports.
@@ -34,11 +35,19 @@ func (p *Plugin) Implement(prevImpl string, field *codegen.Field) string {
 		// Alias collision — fallback to domain+"domain".
 		alias = domain + "domain"
 		if _, err2 := templates.CurrentImports.Reserve(importPath, alias); err2 != nil {
-			return ""
+			return panicStub(field)
 		}
 	}
 
 	return buildDelegation(alias, field)
+}
+
+// panicStub mirrors the default body resolvergen produces when no plugin is
+// registered: panic(fmt.Errorf("not implemented: GoFieldName - graphqlName")).
+// fmt is reserved by the resolver template, so no extra import is needed.
+func panicStub(field *codegen.Field) string {
+	return fmt.Sprintf(`panic(fmt.Errorf("not implemented: %v - %v"))`,
+		field.GoFieldName, field.Name)
 }
 
 // buildDelegation builds the delegation method body.
