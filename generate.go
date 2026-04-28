@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/99designs/gqlgen/codegen"
@@ -21,15 +22,16 @@ type fileGroup struct {
 	objects []*codegen.Object
 }
 
+// domainData holds collected fields and non-root objects for a single domain.
+type domainData struct {
+	fields  []*domainField
+	objects []*codegen.Object
+}
+
 // GenerateCode generates files in domain packages.
 // Called by api.Generate() AFTER resolvergen.
 func (p *Plugin) GenerateCode(data *codegen.Data) error {
 	resolverDir := data.Config.Resolver.Dir()
-
-	type domainData struct {
-		fields  []*domainField
-		objects []*codegen.Object
-	}
 
 	domains := map[string]*domainData{}
 
@@ -84,7 +86,58 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 		}
 	}
 
+	if err := p.renderDomainConstructors(data, domains); err != nil {
+		return fmt.Errorf("render domain constructors: %w", err)
+	}
+
 	return nil
+}
+
+// renderDomainConstructors emits a single file in the root resolver package containing:
+//
+//	func (r *Resolver) Todo() generated.TodoResolver { return &todos.TodoResolver{} }
+//
+// One constructor per non-root domain object. Replaces the per-method delegation
+// layer that resolvergen would otherwise generate on the (now-removed) todoResolver
+// stub struct.
+func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string]*domainData) error {
+	type ctor struct {
+		TypeName string // "Todo"
+		Domain   string // "todos"
+	}
+
+	var ctors []ctor
+	domainSet := map[string]bool{}
+	for domain, d := range domains {
+		for _, obj := range d.objects {
+			ctors = append(ctors, ctor{TypeName: obj.Name, Domain: domain})
+			domainSet[domain] = true
+		}
+	}
+	if len(ctors) == 0 {
+		return nil
+	}
+	sort.Slice(ctors, func(i, j int) bool { return ctors[i].TypeName < ctors[j].TypeName })
+
+	domainImports := make([]string, 0, len(domainSet))
+	for d := range domainSet {
+		domainImports = append(domainImports, p.importPrefix+d)
+	}
+	sort.Strings(domainImports)
+
+	build := struct {
+		GeneratedPkg  string
+		DomainImports []string
+		Ctors         []ctor
+	}{
+		GeneratedPkg:  data.Config.Exec.ImportPath(),
+		DomainImports: domainImports,
+		Ctors:         ctors,
+	}
+
+	outFile := filepath.Join(data.Config.Resolver.Dir(), "domain_resolvers.go")
+
+	return renderConstructorsFile(data, outFile, build)
 }
 
 // groupBySchemaFile groups fields and objects by schema file base name.

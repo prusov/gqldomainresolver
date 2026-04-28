@@ -10,6 +10,12 @@ import (
 
 // Implement is called by resolvergen for each resolver field.
 // Returns the method body string written into .resolvers.go in the root package.
+//
+// Non-root resolver fields (e.g. Todo.User) are not rendered by the safety-net
+// template — those constructors live in domain_resolvers.go and return the
+// domain-package resolver directly, so no per-field delegation stub is needed
+// in the root package. We still emit a panic stub as a defensive default in
+// case the template ever accesses $resolver.Implementation for them.
 func (p *Plugin) Implement(prevImpl string, field *codegen.Field) string {
 	if prevImpl != "" {
 		// Method already exists — return unchanged to preserve manual code.
@@ -21,6 +27,10 @@ func (p *Plugin) Implement(prevImpl string, field *codegen.Field) string {
 		// Root schema or invalid directory name — no domain package to delegate to.
 		// Once ImplementationRender is set, gqlgen no longer falls back to its default
 		// panic stub for empty results, so we must emit it ourselves.
+		return panicStub(field)
+	}
+
+	if !field.Object.Root {
 		return panicStub(field)
 	}
 

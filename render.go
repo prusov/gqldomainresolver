@@ -180,6 +180,35 @@ func getFreeFuncBody(dir, funcName string) string {
 	return ""
 }
 
+// renderConstructorsFile renders the domain_resolvers.go file in the root resolver package.
+// build is a struct with GeneratedPkg (string), DomainImports ([]string), and Ctors ([]struct{TypeName, Domain string}).
+func renderConstructorsFile(data *codegen.Data, outFile string, build any) error {
+	return templates.Render(templates.Options{
+		PackageName: data.Config.Resolver.Package,
+		Filename:    outFile,
+		Data:        build,
+		Packages:    data.Config.Packages,
+		Template:    constructorsTemplate,
+	})
+}
+
+// constructorsTemplate emits one constructor per non-root domain object:
+//
+//	func (r *Resolver) Todo() generated.TodoResolver { return &todos.TodoResolver{} }
+//
+// The generated package and each domain package are reserved via reserveImport
+// so goimports doesn't strip them.
+const constructorsTemplate = `
+{{ reserveImport .GeneratedPkg }}
+{{ range $imp := .DomainImports }}{{ reserveImport $imp }}{{ end }}
+
+{{ range $c := .Ctors }}
+func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
+	return &{{ $c.Domain }}.{{ $c.TypeName }}Resolver{}
+}
+{{ end }}
+`
+
 // domainTemplate is the gotpl template for domain package files.
 //
 // Key design decisions:
