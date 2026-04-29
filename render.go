@@ -6,11 +6,20 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/99designs/gqlgen/codegen"
 	"github.com/99designs/gqlgen/codegen/templates"
 )
+
+// Import mirrors gqlgen's internal/rewrite.Import. We can't import that
+// package (it's internal), so we replicate the minimal shape needed to
+// re-register hand-written imports via templates.CurrentImports.Reserve.
+type Import struct {
+	Alias      string
+	ImportPath string
+}
 
 // astRewriter reads existing method/function bodies from a Go package directory
 // so that hand-written implementations survive re-generation.
@@ -76,6 +85,41 @@ func (rw *astRewriter) getMethodBody(typeName, methodName string) string {
 	return ""
 }
 
+// existingImports returns the import set declared in outFile (matched by
+// absolute path). Used to preserve hand-written imports that only appear
+// inside copied method bodies — gqlgen's renderer only auto-resolves
+// imports for types it knows from codegen.Data, so anything else (e.g.
+// a third-party package referenced solely in a method body) would be
+// dropped and the regenerated file would fail to compile.
+func (rw *astRewriter) existingImports(outFile string) []Import {
+	target, err := filepath.Abs(outFile)
+	if err != nil {
+		return nil
+	}
+	for filename, file := range rw.files {
+		abs, err := filepath.Abs(filename)
+		if err != nil || abs != target {
+			continue
+		}
+		var imps []Import
+		for _, i := range file.Imports {
+			path, err := strconv.Unquote(i.Path.Value)
+			if err != nil {
+				continue
+			}
+			alias := ""
+			if i.Name != nil {
+				alias = i.Name.Name
+			}
+			imps = append(imps, Import{Alias: alias, ImportPath: path})
+		}
+
+		return imps
+	}
+
+	return nil
+}
+
 // remainingFuncs returns the source of all FuncDecl declarations in outFile that
 // were not consumed by getMethodBody. Used to preserve hand-written helpers.
 func (rw *astRewriter) remainingFuncs(outFile string) string {
@@ -137,6 +181,29 @@ type domainFileBuild struct {
 	Objects       []*codegen.Object
 
 	RemainingSource string // unknown functions from the previous file version; emitted as a commented-out warning block
+
+	// imports captured from the previous version of the file. Re-registered via
+	// templates.CurrentImports.Reserve in Imports() so hand-written imports that
+	// only appear inside copied method bodies survive regeneration. Mirrors
+	// gqlgen's resolvergen plugin (see internal/rewrite.ExistingImports +
+	// File.Imports() in plugin/resolvergen/resolver.go).
+	imports []Import
+}
+
+// Imports re-registers every import from the previous file version with the
+// active templates.CurrentImports so the rendered output keeps them. Returns
+// "" because it's invoked from the template purely for side-effect ({{ .Imports }}).
+// Imports unused by the final code are pruned by gqlgen's post-render formatting.
+func (b *domainFileBuild) Imports() string {
+	for _, imp := range b.imports {
+		if imp.Alias == "" {
+			_, _ = templates.CurrentImports.Reserve(imp.ImportPath)
+		} else {
+			_, _ = templates.CurrentImports.Reserve(imp.ImportPath, imp.Alias)
+		}
+	}
+
+	return ""
 }
 
 // domainStructPrefix turns "todos" → "MixinTodos", used to derive the struct
@@ -202,6 +269,7 @@ func renderDomainFile(
 
 	if rw != nil {
 		build.RemainingSource = rw.remainingFuncs(outFile)
+		build.imports = rw.existingImports(outFile)
 	}
 
 	return templates.Render(templates.Options{
@@ -325,6 +393,8 @@ const domainFileNotice = `// This file will be automatically regenerated based o
 const domainTemplate = `
 {{- reserveImport "context" -}}
 {{- reserveImport "fmt" -}}
+
+{{ .Imports }}
 
 {{ if .EmitMutationStruct }}
 type {{ .MutationStructName }} struct{}

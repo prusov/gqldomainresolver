@@ -116,6 +116,142 @@ func TestNewASTRewriter_EmptyDir(t *testing.T) {
 	}
 }
 
+// TestASTRewriter_ExistingImports_Plain captures import paths from the file
+// matching outFile. Regression for the bug where third-party imports referenced
+// only inside copied method bodies were dropped on regeneration.
+func TestASTRewriter_ExistingImports_Plain(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "todo.go", `package todos
+
+import (
+	"context"
+
+	"example.com/foo/service/todo"
+)
+
+type TodoResolver struct{}
+
+func (r *TodoResolver) Something(ctx context.Context) string {
+	return todo.DoSomething()
+}
+`)
+
+	rw, err := newASTRewriter(dir)
+	if err != nil {
+		t.Fatalf("newASTRewriter: %v", err)
+	}
+
+	got := rw.existingImports(filepath.Join(dir, "todo.go"))
+	want := map[string]string{
+		"context":                      "",
+		"example.com/foo/service/todo": "",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("existingImports len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for _, imp := range got {
+		alias, ok := want[imp.ImportPath]
+		if !ok {
+			t.Errorf("unexpected import %q", imp.ImportPath)
+			continue
+		}
+		if imp.Alias != alias {
+			t.Errorf("import %q alias = %q, want %q", imp.ImportPath, imp.Alias, alias)
+		}
+	}
+}
+
+// TestASTRewriter_ExistingImports_Aliased captures named, blank and dot imports.
+func TestASTRewriter_ExistingImports_Aliased(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "todo.go", `package todos
+
+import (
+	myalias "example.com/foo"
+	_ "example.com/blank"
+	. "example.com/dot"
+)
+
+var _ = myalias.X
+var _ = Y
+`)
+
+	rw, err := newASTRewriter(dir)
+	if err != nil {
+		t.Fatalf("newASTRewriter: %v", err)
+	}
+
+	got := rw.existingImports(filepath.Join(dir, "todo.go"))
+	want := map[string]string{
+		"example.com/foo":   "myalias",
+		"example.com/blank": "_",
+		"example.com/dot":   ".",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("existingImports len = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for _, imp := range got {
+		alias, ok := want[imp.ImportPath]
+		if !ok {
+			t.Errorf("unexpected import %q", imp.ImportPath)
+			continue
+		}
+		if imp.Alias != alias {
+			t.Errorf("import %q alias = %q, want %q", imp.ImportPath, imp.Alias, alias)
+		}
+	}
+}
+
+// TestASTRewriter_ExistingImports_PerFile only returns imports from the
+// requested file, not from siblings in the same dir.
+func TestASTRewriter_ExistingImports_PerFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "todo.go", `package todos
+
+import "example.com/todo"
+
+var _ = todo.X
+`)
+	writeFile(t, dir, "user.go", `package todos
+
+import "example.com/user"
+
+var _ = user.Y
+`)
+
+	rw, err := newASTRewriter(dir)
+	if err != nil {
+		t.Fatalf("newASTRewriter: %v", err)
+	}
+
+	got := rw.existingImports(filepath.Join(dir, "todo.go"))
+	if len(got) != 1 || got[0].ImportPath != "example.com/todo" {
+		t.Errorf("existingImports(todo.go) = %v, want [example.com/todo]", got)
+	}
+}
+
+// TestASTRewriter_ExistingImports_MissingFile returns nil when the requested
+// file isn't part of the parsed set.
+func TestASTRewriter_ExistingImports_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "todo.go", `package todos
+
+import "example.com/todo"
+
+var _ = todo.X
+`)
+
+	rw, err := newASTRewriter(dir)
+	if err != nil {
+		t.Fatalf("newASTRewriter: %v", err)
+	}
+
+	got := rw.existingImports(filepath.Join(dir, "missing.go"))
+	if got != nil {
+		t.Errorf("existingImports(missing.go) = %v, want nil", got)
+	}
+}
+
 // TestNewASTRewriter_NonExistentDir returns error for a missing directory.
 func TestNewASTRewriter_NonExistentDir(t *testing.T) {
 	rw, err := newASTRewriter("/nonexistent/path")
