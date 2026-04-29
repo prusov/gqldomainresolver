@@ -154,12 +154,21 @@ func domainStructPrefix(domain string) string {
 // the previous body from disk via the AST rewriter. receiverType returns the
 // receiver type name to look up for a given method (the same name for all
 // root methods, per-object for ObjectMethods).
-func restoreImpls(methods []*domainMethodBuild, rw *astRewriter, receiverType func(*domainMethodBuild) string) {
-	if rw == nil {
-		return
-	}
+//
+// If the AST rewriter is nil (first generation of the domain package) or the
+// receiver isn't found in the domain dir (first-time migration — body still
+// lived in the root package when resolvergen captured prevImpl), falls back to
+// the plugin's migratedImpls cache populated during Implement().
+func restoreImpls(methods []*domainMethodBuild, rw *astRewriter, migrated map[string]string, receiverType func(*domainMethodBuild) string) {
 	for _, m := range methods {
-		m.Implementation = strings.TrimSpace(rw.getMethodBody(receiverType(m), m.Field.GoFieldName))
+		body := ""
+		if rw != nil {
+			body = strings.TrimSpace(rw.getMethodBody(receiverType(m), m.Field.GoFieldName))
+		}
+		if body == "" && migrated != nil && m.Object != nil {
+			body = strings.TrimSpace(migrated[m.Object.Name+"."+m.Field.GoFieldName])
+		}
+		m.Implementation = body
 	}
 }
 
@@ -169,16 +178,17 @@ func renderDomainFile(
 	outFile string,
 	build *domainFileBuild,
 	rw *astRewriter, // nil if package is being created for the first time
+	migrated map[string]string, // captured prevImpls from Implement() — nil-safe
 ) error {
 	prefix := domainStructPrefix(pkgName)
 	mutationType := prefix + "Mutation"
 	queryType := prefix + "Query"
 	subscriptionType := prefix + "Subscription"
 
-	restoreImpls(build.MutationMethods, rw, func(*domainMethodBuild) string { return mutationType })
-	restoreImpls(build.QueryMethods, rw, func(*domainMethodBuild) string { return queryType })
-	restoreImpls(build.SubscriptionMethods, rw, func(*domainMethodBuild) string { return subscriptionType })
-	restoreImpls(build.ObjectMethods, rw, func(m *domainMethodBuild) string { return m.Object.Name + "Resolver" })
+	restoreImpls(build.MutationMethods, rw, migrated, func(*domainMethodBuild) string { return mutationType })
+	restoreImpls(build.QueryMethods, rw, migrated, func(*domainMethodBuild) string { return queryType })
+	restoreImpls(build.SubscriptionMethods, rw, migrated, func(*domainMethodBuild) string { return subscriptionType })
+	restoreImpls(build.ObjectMethods, rw, migrated, func(m *domainMethodBuild) string { return m.Object.Name + "Resolver" })
 
 	if len(build.MutationMethods) > 0 {
 		build.MutationStructName = mutationType
@@ -246,29 +256,33 @@ type DomainResolvers struct {
 {{- end }}
 }
 
+{{ if .HasMutation }}
 func (r *Resolver) Mutation() generated.MutationResolver {
 	return &mutationResolver{Resolver: r}
 }
-func (r *Resolver) Query() generated.QueryResolver {
-	return &queryResolver{Resolver: r}
-}
-{{ if .HasSubscription }}
-func (r *Resolver) Subscription() generated.SubscriptionResolver {
-	return &subscriptionResolver{Resolver: r}
-}
-{{ end }}
 
 type mutationResolver struct {
 	Resolver *Resolver
 	DomainResolvers
+}
+{{ end }}
+
+{{ if .HasQuery }}
+func (r *Resolver) Query() generated.QueryResolver {
+	return &queryResolver{Resolver: r}
 }
 
 type queryResolver struct {
 	Resolver *Resolver
 	DomainResolvers
 }
+{{ end }}
 
 {{ if .HasSubscription }}
+func (r *Resolver) Subscription() generated.SubscriptionResolver {
+	return &subscriptionResolver{Resolver: r}
+}
+
 type subscriptionResolver struct {
 	Resolver *Resolver
 	DomainResolvers

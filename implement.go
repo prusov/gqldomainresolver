@@ -26,6 +26,12 @@ import (
 //   - otherwise → panic stub.
 func (p *Plugin) Implement(prevImpl string, field *codegen.Field) string {
 	if p.domainFor(field.Position.Src.Name) != "" {
+		// Stash the existing body so first-time migrations can rehydrate the
+		// domain-package method from it. Only meaningful bodies are kept —
+		// empty/panic stubs would just overwrite legit prior generations.
+		if prevImpl != "" && field.Object != nil {
+			p.migratedImpls[migratedImplKey(field.Object.Name, field.GoFieldName)] = prevImpl
+		}
 		return ""
 	}
 

@@ -159,16 +159,42 @@ impractical.
    - Regenerates code (`go run ./cmd/gqlgen`) — produces a new
      `graph/resolver/<domain>/` package and rewrites the corresponding root
      stubs to delegate via promotion.
-   - Moves any hand-written resolver bodies for that domain from the root
-     `*.resolvers.go` into the generated domain file (the AST rewriter
-     preserves method bodies on subsequent regenerations, but the **first**
-     migration of a domain has to copy bodies in by hand — they live in the
-     root file before the domain package exists).
+   - **Resolver bodies migrate automatically.** On the first run with a
+     freshly enabled domain the plugin captures the existing body of every
+     resolver field (passed in by gqlgen as `prevImpl` to `Implement()` before
+     the root file is overwritten) and replays it into the corresponding
+     method in the new domain package. Hand-copying is no longer required.
+
+   **What you must still do by hand after the auto-migration:**
+
+   - **Verify imports.** Bodies are copied verbatim, but the *imports* of the
+     old root file aren't. `goimports` (which gqlgen runs as part of code
+     generation) usually adds the missing ones automatically, but
+     module-internal imports for sibling packages can be ambiguous — open the
+     generated `graph/resolver/<domain>/<file>.go` and check that all symbols
+     resolve. Pay special attention to imports that were aliased.
+   - **Move helper functions and unused symbols.** Only resolver method
+     *bodies* migrate. Free functions, constants, type aliases, or
+     non-resolver methods that lived in the same `*.resolvers.go` file stay
+     in the root package. If a migrated body references such a helper, either
+     move the helper into the domain package or export it and import from the
+     root resolver package.
+   - **Re-validate the resolver wiring.** Migrated bodies now run on
+     `Mixin<Domain>Mutation` / `<Type>Resolver` receivers, not on
+     `mutationResolver` / `<type>Resolver`. Code that accessed `r.Resolver`
+     fields (DI handles, loggers, etc.) won't compile until you re-thread
+     those dependencies — typically via fields on the domain struct that
+     `domain_resolvers.go` instantiates.
+   - **Run the full test suite.** Compilation passing isn't enough — domain
+     packages don't import `graph/generated`, so a missing wiring shows up
+     only at runtime when the GraphQL handler dispatches a query.
 
 3. **Roll back a domain by removing its name** from the list and regenerating.
-   The domain falls back to root-package resolvers; bodies you copied in step 2
-   stay in the domain package directory (delete it manually if you want a
-   clean revert).
+   The domain falls back to root-package resolvers, but the **migrated bodies
+   are not auto-copied back** — they stay in `graph/resolver/<domain>/` and
+   the regenerated root file gets fresh panic stubs. Either keep the domain
+   directory and live with the dual structure, copy the bodies back manually,
+   or delete the domain directory if the migration was abandoned.
 
 ### Behavior of the allowlist
 
@@ -196,9 +222,13 @@ graph/schema/
 
 ## Preserving hand-written code
 
-On re-generation the plugin reads existing method bodies from disk via AST parsing and replays them into the new file. Hand-written implementations inside domain packages survive regeneration automatically.
+The plugin preserves resolver bodies in three different scenarios — each uses a different mechanism:
 
-Root-package stubs (the `.resolvers.go` files) also preserve `prevImpl` if the plugin returns it — this applies to non-domain fields (e.g. manually implemented `Query.hello`).
+1. **Steady-state regeneration of an already-migrated domain.** The plugin parses the existing files in `graph/resolver/<domain>/` via AST and replays each method's body into the new file by matching receiver type + method name.
+
+2. **First-time migration of a domain** (newly added to `WithEnabledDomains`). The domain directory doesn't exist yet, and by the time `GenerateCode()` runs gqlgen has already overwritten the root `*.resolvers.go`. Instead, the plugin captures `prevImpl` inside `Implement()` (which fires *before* the overwrite) and stashes it keyed by `<ObjectName>.<FieldName>`. When the new domain file is rendered, this cache is consulted as a fallback — the body lands in the right method on the right receiver in the domain package. See the migration section above for what to verify after this auto-move.
+
+3. **Root-package stubs for non-migrated fields** (e.g. `Query.hello` defined in `schema.graphqls` with no domain). The default gqlgen `prevImpl` mechanism applies: bodies survive across regeneration as long as the field still exists in the schema.
 
 Helper functions hand-written in a domain file but no longer referenced by a generated method don't disappear silently — they're moved into a commented-out `// !!! WARNING !!!` block at the bottom of the file. Salvage what you need, then delete the block.
 

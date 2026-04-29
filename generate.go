@@ -119,7 +119,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			build.EmitQueryStruct = base == queryOwner
 			build.EmitSubscriptionStruct = base == subscriptionOwner
 
-			if err := renderDomainFile(data, domain, outFile, build, rw); err != nil {
+			if err := renderDomainFile(data, domain, outFile, build, rw, p.migratedImpls); err != nil {
 				return fmt.Errorf("render %s: %w", outFile, err)
 			}
 		}
@@ -213,7 +213,6 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 	var ctors []ctor
 	var embeds []embed
 	domainSet := map[string]bool{}
-	hasSubscription := false
 
 	for domain, d := range domains {
 		prefix := domainStructPrefix(domain)
@@ -229,7 +228,6 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		if hasRootField(d.fields, "Subscription") {
 			embeds = append(embeds, embed{TypeName: prefix + "Subscription", Domain: domain})
 			domainSet[domain] = true
-			hasSubscription = true
 		}
 
 		for _, obj := range d.objects {
@@ -240,7 +238,18 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 
 	rootCtors := p.collectRootCtors(data.Objects)
 
-	if len(ctors) == 0 && len(embeds) == 0 && len(rootCtors) == 0 {
+	// Root-type emission is driven by the schema, not by which domains are
+	// migrated. The custom resolver template emits methods on
+	// mutationResolver/queryResolver/subscriptionResolver whenever those root
+	// types exist in the schema, so the wrapper structs and constructors must
+	// always be present too — otherwise an empty allowlist (or partial
+	// migration that skips a root) leaves the package un-compilable.
+	hasMutation := data.MutationRoot != nil
+	hasQuery := data.QueryRoot != nil
+	hasSubscription := data.SubscriptionRoot != nil
+
+	if !hasMutation && !hasQuery && !hasSubscription &&
+		len(ctors) == 0 && len(embeds) == 0 && len(rootCtors) == 0 {
 		return nil
 	}
 
@@ -266,6 +275,8 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		Ctors           []ctor
 		Embeds          []embed
 		RootCtors       []rootCtor
+		HasMutation     bool
+		HasQuery        bool
 		HasSubscription bool
 	}{
 		GeneratedPkg:    data.Config.Exec.ImportPath(),
@@ -273,6 +284,8 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		Ctors:           ctors,
 		Embeds:          embeds,
 		RootCtors:       rootCtors,
+		HasMutation:     hasMutation,
+		HasQuery:        hasQuery,
 		HasSubscription: hasSubscription,
 	}
 

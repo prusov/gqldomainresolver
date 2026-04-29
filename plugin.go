@@ -17,6 +17,16 @@ import (
 // a specific domain. This enables incremental migration of large projects.
 type Plugin struct {
 	enabledSet map[string]bool
+
+	// migratedImpls captures the previous resolver body of each field whose
+	// domain becomes enabled. resolvergen passes prevImpl (the body of the
+	// hand-written method on the root-package wrapper, e.g. *todoResolver) into
+	// Implement() and then overwrites the source file. By the time
+	// GenerateCode() runs the body is gone from disk, so the AST rewriter on
+	// the domain package can't find it on first migration. We stash it here
+	// keyed by "<ObjectName>.<GoFieldName>" so renderDomainFile can fall back
+	// to it when no body is found in the domain package.
+	migratedImpls map[string]string
 }
 
 // Option configures a Plugin at construction time.
@@ -44,12 +54,17 @@ func WithEnabledDomains(domains ...string) Option {
 // New constructs the plugin. With no options the allowlist is empty and the
 // plugin is a no-op — call WithEnabledDomains to migrate specific domains.
 func New(opts ...Option) *Plugin {
-	p := &Plugin{}
+	p := &Plugin{migratedImpls: map[string]string{}}
 	for _, opt := range opts {
 		opt(p)
 	}
 
 	return p
+}
+
+// migratedImplKey is the lookup key for stashed prevImpl bodies.
+func migratedImplKey(objectName, goFieldName string) string {
+	return objectName + "." + goFieldName
 }
 
 func (p *Plugin) Name() string { return "domain-resolver" }

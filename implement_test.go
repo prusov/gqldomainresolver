@@ -82,6 +82,36 @@ func TestImplement(t *testing.T) {
 	}
 }
 
+// TestImplement_StashesPrevImplForMigratedDomain captures the contract that
+// makes first-time domain migration work without losing user code: when a
+// field's domain becomes enabled, Implement returns "" (so the root method is
+// stripped) AND stashes prevImpl in migratedImpls keyed by Object.Field, so
+// that GenerateCode can rehydrate the body inside the new domain package
+// (where the AST rewriter sees an empty / non-existent dir).
+func TestImplement_StashesPrevImplForMigratedDomain(t *testing.T) {
+	p := New(WithEnabledDomains("todos"))
+
+	mutationObj := makeObject("Mutation", true)
+	field := makeFieldWithPos("CreateTodo", mutationObj, todoSchema)
+
+	got := p.Implement(`return &model.Todo{ID: "1"}, nil`, field)
+	if got != "" {
+		t.Fatalf("Implement should return empty for migrated domain, got %q", got)
+	}
+	stashed := p.migratedImpls[migratedImplKey("Mutation", "CreateTodo")]
+	if stashed != `return &model.Todo{ID: "1"}, nil` {
+		t.Errorf("migratedImpls miss: got %q", stashed)
+	}
+
+	// Empty prevImpl must NOT poison the cache (panic stubs would overwrite a
+	// legit prior generation if we stashed them).
+	field2 := makeFieldWithPos("Todos", makeObject("Query", true), todoSchema)
+	_ = p.Implement("", field2)
+	if _, ok := p.migratedImpls[migratedImplKey("Query", "Todos")]; ok {
+		t.Errorf("empty prevImpl must not be stashed")
+	}
+}
+
 func TestPanicStub_Format(t *testing.T) {
 	mutationObj := makeObject("Mutation", true)
 	field := makeFieldWithPos("CreateTodo", mutationObj, todoSchema)
