@@ -15,17 +15,17 @@ import (
 // whose methods are promoted up through mutationResolver{*Resolver}.
 //
 // Behavior, in evaluation order:
-//   - root field with domain → "" (template skips; method comes via promotion).
-//     This must beat prevImpl so legacy hand-shaped delegation stubs
-//     (return todos.MutationCreateTodo(...)) are deleted on regen.
-//   - prevImpl != "" → preserve hand-written code (e.g. manual Hello body).
-//   - root field without domain → panic stub (no domain package to delegate to).
-//   - non-root field → panic stub (defensive; constructor returns a domain-package
-//     resolver directly so the template should not emit these).
+//   - field whose domain is enabled → "" (template skips; method lives in the
+//     domain package). Applies to root and non-root fields alike — non-root
+//     methods are reached via the per-object constructor returning the
+//     domain-package resolver.
+//   - prevImpl != "" → preserve hand-written code in the root file. Critical
+//     for the gradual migration case: a project's existing field resolvers
+//     (e.g. (r *todoResolver) User) must survive regen until their domain
+//     is enabled.
+//   - otherwise → panic stub.
 func (p *Plugin) Implement(prevImpl string, field *codegen.Field) string {
-	domain := p.domainFor(field.Position.Src.Name)
-
-	if field.Object.Root && domain != "" {
+	if p.domainFor(field.Position.Src.Name) != "" {
 		return ""
 	}
 

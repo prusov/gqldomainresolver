@@ -280,6 +280,18 @@ func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
 	return &{{ $c.Domain }}.{{ $c.TypeName }}Resolver{}
 }
 {{ end }}
+
+{{/* Per-object ctors + wrapper structs for non-root types whose domain is not
+     enabled. Mirrors what default gqlgen would emit. Lets the project keep
+     existing field resolvers in *.resolvers.go (e.g. (r *todoResolver) User)
+     compiling before the domain is migrated. */}}
+{{ range $rc := .RootCtors }}
+func (r *Resolver) {{ $rc.TypeName }}() generated.{{ $rc.TypeName }}Resolver {
+	return &{{ $rc.WrapperLc }}{r}
+}
+
+type {{ $rc.WrapperLc }} struct{ *Resolver }
+{{ end }}
 `
 
 // domainTemplate is the gotpl template for domain package files.

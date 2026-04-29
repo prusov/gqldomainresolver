@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/99designs/gqlgen/codegen"
+	"github.com/99designs/gqlgen/codegen/templates"
 )
 
 // domainField is a resolver field bound to its parent object.
@@ -114,9 +115,9 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			outFile := filepath.Join(domainDir, base+".go")
 
 			build := buildDomainFile(fg)
-			build.EmitMutationStruct = (base == mutationOwner)
-			build.EmitQueryStruct = (base == queryOwner)
-			build.EmitSubscriptionStruct = (base == subscriptionOwner)
+			build.EmitMutationStruct = base == mutationOwner
+			build.EmitQueryStruct = base == queryOwner
+			build.EmitSubscriptionStruct = base == subscriptionOwner
 
 			if err := renderDomainFile(data, domain, outFile, build, rw); err != nil {
 				return fmt.Errorf("render %s: %w", outFile, err)
@@ -154,25 +155,61 @@ func buildDomainFile(fg *fileGroup) *domainFileBuild {
 	return build
 }
 
+// ctor is a per-object constructor for a migrated domain — emits
+// `(r *Resolver) Todo() generated.TodoResolver { return &todos.TodoResolver{} }`.
+type ctor struct {
+	TypeName string // "Todo"
+	Domain   string // "todos"
+}
+
+// embed is a per-domain root struct value-embedded into DomainResolvers.
+type embed struct {
+	TypeName string // "MixinTodosMutation"
+	Domain   string // "todos"
+}
+
+// rootCtor is a per-object constructor for an UN-migrated domain — emits a
+// constructor returning a root-package wrapper struct (e.g. todoResolver),
+// matching what default gqlgen produces. Keeps gradual-migration projects
+// compiling: hand-written field-resolver methods on the wrapper survive
+// regen until the domain is added to the allowlist.
+type rootCtor struct {
+	TypeName  string // "Todo"
+	WrapperLc string // "todoResolver"
+}
+
+// collectRootCtors selects non-root objects with resolver fields whose
+// domain is NOT in the allowlist.
+func (p *Plugin) collectRootCtors(objects []*codegen.Object) []rootCtor {
+	var out []rootCtor
+	for _, obj := range objects {
+		if obj.Root || !obj.HasResolvers() {
+			continue
+		}
+		if p.domainFor(obj.Position.Src.Name) != "" {
+			continue
+		}
+		out = append(out, rootCtor{
+			TypeName:  obj.Name,
+			WrapperLc: templates.LcFirst(obj.Name) + "Resolver",
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TypeName < out[j].TypeName })
+
+	return out
+}
+
 // renderDomainConstructors emits domain_resolvers.go in the root resolver
 // package. It owns:
 //   - the DomainResolvers struct that value-embeds every <Domain>Mutation/Query
 //     so root-field methods are promoted up to mutationResolver/queryResolver;
 //   - Mutation()/Query()/Subscription() constructors and their wrapper structs;
-//   - per-object constructors like (r *Resolver) Todo() returning &todos.TodoResolver{}.
+//   - per-object constructors like (r *Resolver) Todo() returning &todos.TodoResolver{};
+//   - root-package wrappers for non-migrated domains (see rootCtor).
 //
 // The import path for domain packages is derived from data.Config.Resolver.ImportPath()
 // — the plugin is module-agnostic.
 func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string]*domainData) error {
-	type ctor struct {
-		TypeName string // "Todo"
-		Domain   string // "todos"
-	}
-	type embed struct {
-		TypeName string // "TodosMutation"
-		Domain   string // "todos"
-	}
-
 	var ctors []ctor
 	var embeds []embed
 	domainSet := map[string]bool{}
@@ -201,7 +238,9 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		}
 	}
 
-	if len(ctors) == 0 && len(embeds) == 0 {
+	rootCtors := p.collectRootCtors(data.Objects)
+
+	if len(ctors) == 0 && len(embeds) == 0 && len(rootCtors) == 0 {
 		return nil
 	}
 
@@ -226,12 +265,14 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		DomainImports   []string
 		Ctors           []ctor
 		Embeds          []embed
+		RootCtors       []rootCtor
 		HasSubscription bool
 	}{
 		GeneratedPkg:    data.Config.Exec.ImportPath(),
 		DomainImports:   domainImports,
 		Ctors:           ctors,
 		Embeds:          embeds,
+		RootCtors:       rootCtors,
 		HasSubscription: hasSubscription,
 	}
 

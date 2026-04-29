@@ -42,10 +42,24 @@ func TestImplement(t *testing.T) {
 			want:     `return "world", nil`,
 		},
 		{
-			name:  "non-root field returns panic stub by default",
+			// Enabled domain owns the field — method lives in the domain pkg
+			// (e.g. todos.TodoResolver.User), so root file must drop it.
+			name:  "non-root field with enabled domain returns empty",
 			field: &domainField{Object: todoObj, Field: makeFieldWithPos("User", todoObj, todoSchema)},
-			// non-root fields normally never reach Implement (constructor route),
-			// but this is the defensive fallback.
+			want:  "",
+		},
+		{
+			// Domain present in schema path but NOT in allowlist — gradual
+			// migration mid-flight. prevImpl from the existing root file must
+			// survive regen; otherwise we silently delete user code.
+			name:     "non-root field with disabled domain preserves prevImpl",
+			prevImpl: `return &model.User{ID: "real"}, nil`,
+			field:    &domainField{Object: makeObject("Other", false), Field: makeFieldWithPos("User", makeObject("Other", false), "/abs/graph/schema/other/x.graphqls")},
+			want:     `return &model.User{ID: "real"}, nil`,
+		},
+		{
+			name:       "non-root field with disabled domain falls back to panic stub",
+			field:      &domainField{Object: makeObject("Other", false), Field: makeFieldWithPos("User", makeObject("Other", false), "/abs/graph/schema/other/x.graphqls")},
 			wantPrefix: `panic(fmt.Errorf("not implemented:`,
 		},
 	}

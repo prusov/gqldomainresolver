@@ -28,8 +28,11 @@
 
 {{ .Imports }}
 
+{{/* Emission is gated on Implementation only — the plugin returns "" to suppress
+     emission for fields whose domain is enabled (those live in the domain
+     package). Both root and non-root fields are emitted otherwise, so existing
+     field resolvers in root files survive regen until their domain is migrated. */}}
 {{ range $resolver := .Resolvers -}}
-	{{- if $resolver.Object.Root -}}
 	{{- if $resolver.Implementation -}}
 	{{- if $resolver.Field.IsBatch }}
 	{{ if not $.OmitTemplateComment -}}
@@ -47,7 +50,6 @@
 		func (r *{{lcFirst $resolver.Object.Name}}{{ucFirst $.ResolverType}}) {{$resolver.Field.GoFieldName}}{{ with $resolver.PrevDecl }}{{ $resolver.Field.ShortResolverSignature .Type }}{{ else }}{{ $resolver.Field.ShortResolverDeclaration }}{{ end }}{
 			{{ $resolver.Implementation }}
 		}
-	{{- end }}
 	{{- end }}
 	{{- end }}
 {{ end }}

@@ -43,8 +43,12 @@ func makeObjectWithPos(name string, root bool, schemaPath string) *codegen.Objec
 	}
 }
 
-const todoSchema = "/abs/graph/schema/todos/todo.graphqls"
-const userSchema = "/abs/graph/schema/users/user.graphqls"
+const (
+	todoSchema = "/abs/graph/schema/todos/todo.graphqls"
+	userSchema = "/abs/graph/schema/users/user.graphqls"
+	todoType   = "Todo"
+	userType   = "User"
+)
 
 func TestGroupBySchemaFile_SingleDomain(t *testing.T) {
 	mutObj := makeObject("Mutation", true)
@@ -98,7 +102,7 @@ func TestGroupBySchemaFile_TwoDomains(t *testing.T) {
 	if len(todoGroup.fields) != 2 {
 		t.Errorf("todo group: expected 2 fields, got %d", len(todoGroup.fields))
 	}
-	if len(todoGroup.objects) != 1 || todoGroup.objects[0].Name != "Todo" {
+	if len(todoGroup.objects) != 1 || todoGroup.objects[0].Name != todoType {
 		t.Errorf("todo group: expected [Todo] objects, got %v", objectNames(todoGroup.objects))
 	}
 
@@ -109,7 +113,7 @@ func TestGroupBySchemaFile_TwoDomains(t *testing.T) {
 	if len(userGroup.fields) != 1 {
 		t.Errorf("user group: expected 1 field, got %d", len(userGroup.fields))
 	}
-	if len(userGroup.objects) != 1 || userGroup.objects[0].Name != "User" {
+	if len(userGroup.objects) != 1 || userGroup.objects[0].Name != userType {
 		t.Errorf("user group: expected [User] objects, got %v", objectNames(userGroup.objects))
 	}
 }
@@ -141,6 +145,86 @@ func TestGroupBySchemaFile_Empty(t *testing.T) {
 	groups := groupBySchemaFile(nil, nil)
 	if len(groups) != 0 {
 		t.Errorf("expected empty map, got %d groups", len(groups))
+	}
+}
+
+// objWithResolverField builds an Object with a single resolver field so that
+// HasResolvers() reports true. Used in collectRootCtors tests.
+func objWithResolverField(name string, root bool, schemaPath string) *codegen.Object {
+	o := makeObjectWithPos(name, root, schemaPath)
+	o.Fields = []*codegen.Field{{
+		FieldDefinition: &gqlast.FieldDefinition{
+			Name:     "f",
+			Position: &gqlast.Position{Src: &gqlast.Source{Name: schemaPath}},
+		},
+		IsResolver: true,
+	}}
+
+	return o
+}
+
+// TestCollectRootCtors_DisabledDomainGetsRootWrapper verifies that an object
+// in a domain dir whose domain is NOT in the allowlist gets a root-package
+// ctor + wrapper (so existing root resolvers keep compiling during gradual
+// migration).
+func TestCollectRootCtors_DisabledDomainGetsRootWrapper(t *testing.T) {
+	p := New(WithEnabledDomains("todos"))
+
+	objs := []*codegen.Object{
+		objWithResolverField("Todo", false, todoSchema), // todos enabled → skip
+		objWithResolverField("User", false, userSchema), // users disabled → wrap
+		objWithResolverField("Query", true, todoSchema), // root → skip
+		makeObjectWithPos("Subtask", false, userSchema), // no resolvers → skip
+	}
+
+	got := p.collectRootCtors(objs)
+
+	if len(got) != 1 {
+		t.Fatalf("expected 1 rootCtor, got %d: %+v", len(got), got)
+	}
+	if got[0].TypeName != userType || got[0].WrapperLc != "userResolver" {
+		t.Errorf("got %+v, want {User userResolver}", got[0])
+	}
+}
+
+// TestCollectRootCtors_NoAllowlistEverythingWraps verifies the empty-allowlist
+// case: every non-root object with resolvers becomes a root wrapper. This is
+// the entry point for projects just adopting the plugin — no domain has been
+// migrated yet, so the plugin must behave like default gqlgen would.
+func TestCollectRootCtors_NoAllowlistEverythingWraps(t *testing.T) {
+	p := New()
+
+	objs := []*codegen.Object{
+		objWithResolverField("Todo", false, todoSchema),
+		objWithResolverField("User", false, userSchema),
+	}
+
+	got := p.collectRootCtors(objs)
+
+	if len(got) != 2 {
+		t.Fatalf("expected 2 rootCtors, got %d: %+v", len(got), got)
+	}
+	// Sorted alphabetically: Todo, User.
+	if got[0].TypeName != "Todo" || got[1].TypeName != "User" {
+		t.Errorf("expected [Todo, User], got [%s, %s]", got[0].TypeName, got[1].TypeName)
+	}
+}
+
+// TestCollectRootCtors_AllEnabledNoRoots — symmetric to the disabled case.
+// Sanity check that the original behaviour (all domains migrated → no root
+// wrappers) is preserved.
+func TestCollectRootCtors_AllEnabledNoRoots(t *testing.T) {
+	p := New(WithEnabledDomains("todos", "users"))
+
+	objs := []*codegen.Object{
+		objWithResolverField("Todo", false, todoSchema),
+		objWithResolverField("User", false, userSchema),
+	}
+
+	got := p.collectRootCtors(objs)
+
+	if len(got) != 0 {
+		t.Errorf("expected no rootCtors when all domains enabled, got %+v", got)
 	}
 }
 
