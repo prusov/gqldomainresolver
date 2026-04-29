@@ -83,7 +83,6 @@ func main() {
     }
     if err := api.Generate(cfg, api.AddPlugin(domainresolver.New())); err != nil {
         log.Fatal(err)
-        os.Exit(1)
     }
 }
 ```
