@@ -42,6 +42,16 @@ func (d *domainData) hasRootQuery() bool {
 	return false
 }
 
+// hasRootSubscription reports whether the domain has any root Subscription fields.
+func (d *domainData) hasRootSubscription() bool {
+	for _, f := range d.fields {
+		if f.Object.Root && f.Object.Name == "Subscription" {
+			return true
+		}
+	}
+	return false
+}
+
 // GenerateCode generates files in domain packages.
 // Called by api.Generate() AFTER resolvergen.
 func (p *Plugin) GenerateCode(data *codegen.Data) error {
@@ -105,6 +115,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 
 		mutationOwner := ""
 		queryOwner := ""
+		subscriptionOwner := ""
 		for _, b := range bases {
 			fg := groups[b]
 			if mutationOwner == "" && fg.hasRootMutation() {
@@ -112,6 +123,9 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			}
 			if queryOwner == "" && fg.hasRootQuery() {
 				queryOwner = b
+			}
+			if subscriptionOwner == "" && fg.hasRootSubscription() {
+				subscriptionOwner = b
 			}
 		}
 
@@ -122,6 +136,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			build := buildDomainFile(fg)
 			build.EmitMutationStruct = (base == mutationOwner)
 			build.EmitQueryStruct = (base == queryOwner)
+			build.EmitSubscriptionStruct = (base == subscriptionOwner)
 
 			if err := renderDomainFile(data, domain, outFile, build, rw); err != nil {
 				return fmt.Errorf("render %s: %w", outFile, err)
@@ -149,6 +164,8 @@ func buildDomainFile(fg *fileGroup) *domainFileBuild {
 			build.MutationMethods = append(build.MutationMethods, m)
 		case df.Object.Root && df.Object.Name == "Query":
 			build.QueryMethods = append(build.QueryMethods, m)
+		case df.Object.Root && df.Object.Name == "Subscription":
+			build.SubscriptionMethods = append(build.SubscriptionMethods, m)
 		case !df.Object.Root:
 			build.ObjectMethods = append(build.ObjectMethods, m)
 		}
@@ -188,6 +205,10 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 			embeds = append(embeds, embed{TypeName: prefix + "Query", Domain: domain})
 			domainSet[domain] = true
 		}
+		if d.hasRootSubscription() {
+			embeds = append(embeds, embed{TypeName: prefix + "Subscription", Domain: domain})
+			domainSet[domain] = true
+		}
 
 		for _, obj := range d.objects {
 			ctors = append(ctors, ctor{TypeName: obj.Name, Domain: domain})
@@ -197,6 +218,21 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 
 	if len(ctors) == 0 && len(embeds) == 0 {
 		return nil
+	}
+
+	hasSubscription := false
+	for _, obj := range data.Objects {
+		if obj.Root && obj.Name == "Subscription" {
+			for _, f := range obj.Fields {
+				if f.IsResolver {
+					hasSubscription = true
+					break
+				}
+			}
+			if hasSubscription {
+				break
+			}
+		}
 	}
 
 	sort.Slice(ctors, func(i, j int) bool { return ctors[i].TypeName < ctors[j].TypeName })
@@ -214,15 +250,17 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 	sort.Strings(domainImports)
 
 	build := struct {
-		GeneratedPkg  string
-		DomainImports []string
-		Ctors         []ctor
-		Embeds        []embed
+		GeneratedPkg    string
+		DomainImports   []string
+		Ctors           []ctor
+		Embeds          []embed
+		HasSubscription bool
 	}{
-		GeneratedPkg:  data.Config.Exec.ImportPath(),
-		DomainImports: domainImports,
-		Ctors:         ctors,
-		Embeds:        embeds,
+		GeneratedPkg:    data.Config.Exec.ImportPath(),
+		DomainImports:   domainImports,
+		Ctors:           ctors,
+		Embeds:          embeds,
+		HasSubscription: hasSubscription,
 	}
 
 	outFile := filepath.Join(data.Config.Resolver.Dir(), "domain_resolvers.go")
@@ -248,6 +286,15 @@ func (fg *fileGroup) hasRootMutation() bool {
 func (fg *fileGroup) hasRootQuery() bool {
 	for _, f := range fg.fields {
 		if f.Object.Root && f.Object.Name == "Query" {
+			return true
+		}
+	}
+	return false
+}
+
+func (fg *fileGroup) hasRootSubscription() bool {
+	for _, f := range fg.fields {
+		if f.Object.Root && f.Object.Name == "Subscription" {
 			return true
 		}
 	}

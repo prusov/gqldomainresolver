@@ -89,12 +89,15 @@ type domainMethodBuild struct {
 
 type domainFileBuild struct {
 	// Root-method emission.
-	MutationStructName string               // e.g., "TodosMutation". Empty when no mutation methods in this file.
-	QueryStructName    string               // e.g., "TodosQuery". Empty when no query methods in this file.
-	MutationMethods    []*domainMethodBuild // methods on MutationStructName
-	QueryMethods       []*domainMethodBuild // methods on QueryStructName
-	EmitMutationStruct bool                 // declare `type <MutationStructName> struct{}` in this file
-	EmitQueryStruct    bool                 // declare `type <QueryStructName> struct{}` in this file
+	MutationStructName     string               // e.g., "TodosMutation". Empty when no mutation methods in this file.
+	QueryStructName        string               // e.g., "TodosQuery". Empty when no query methods in this file.
+	SubscriptionStructName string               // e.g., "TodosSubscription". Empty when no subscription methods in this file.
+	MutationMethods        []*domainMethodBuild // methods on MutationStructName
+	QueryMethods           []*domainMethodBuild // methods on QueryStructName
+	SubscriptionMethods    []*domainMethodBuild // methods on SubscriptionStructName
+	EmitMutationStruct     bool                 // declare `type <MutationStructName> struct{}` in this file
+	EmitQueryStruct        bool                 // declare `type <QueryStructName> struct{}` in this file
+	EmitSubscriptionStruct bool                 // declare `type <SubscriptionStructName> struct{}` in this file
 
 	// Per-object (non-root) resolver emission — unchanged behavior.
 	ObjectMethods []*domainMethodBuild
@@ -122,6 +125,7 @@ func renderDomainFile(
 	prefix := domainStructPrefix(pkgName)
 	mutationType := prefix + "Mutation"
 	queryType := prefix + "Query"
+	subscriptionType := prefix + "Subscription"
 
 	for _, m := range build.MutationMethods {
 		impl := ""
@@ -134,6 +138,13 @@ func renderDomainFile(
 		impl := ""
 		if rw != nil {
 			impl = rw.getMethodBody(queryType, m.Field.GoFieldName)
+		}
+		m.Implementation = strings.TrimSpace(impl)
+	}
+	for _, m := range build.SubscriptionMethods {
+		impl := ""
+		if rw != nil {
+			impl = rw.getMethodBody(subscriptionType, m.Field.GoFieldName)
 		}
 		m.Implementation = strings.TrimSpace(impl)
 	}
@@ -150,6 +161,9 @@ func renderDomainFile(
 	}
 	if len(build.QueryMethods) > 0 {
 		build.QueryStructName = queryType
+	}
+	if len(build.SubscriptionMethods) > 0 {
+		build.SubscriptionStructName = subscriptionType
 	}
 
 	return templates.Render(templates.Options{
@@ -209,6 +223,11 @@ func (r *Resolver) Mutation() generated.MutationResolver {
 func (r *Resolver) Query() generated.QueryResolver {
 	return &queryResolver{Resolver: r}
 }
+{{ if .HasSubscription }}
+func (r *Resolver) Subscription() generated.SubscriptionResolver {
+	return &subscriptionResolver{Resolver: r}
+}
+{{ end }}
 
 type mutationResolver struct {
 	Resolver *Resolver
@@ -219,6 +238,13 @@ type queryResolver struct {
 	Resolver *Resolver
 	DomainResolvers
 }
+
+{{ if .HasSubscription }}
+type subscriptionResolver struct {
+	Resolver *Resolver
+	DomainResolvers
+}
+{{ end }}
 
 {{ range $c := .Ctors }}
 func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
@@ -248,6 +274,10 @@ type {{ .MutationStructName }} struct{}
 type {{ .QueryStructName }} struct{}
 {{ end }}
 
+{{ if .EmitSubscriptionStruct }}
+type {{ .SubscriptionStructName }} struct{}
+{{ end }}
+
 {{ range $m := .MutationMethods }}
 func (m *{{ $.MutationStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
@@ -264,6 +294,16 @@ func (q *{{ $.QueryStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortRes
 	{{ $m.Implementation }}
 	{{- else }}
 	panic(fmt.Errorf("not implemented: Query.{{ $m.Field.GoFieldName }}"))
+	{{- end }}
+}
+{{ end }}
+
+{{ range $m := .SubscriptionMethods }}
+func (s *{{ $.SubscriptionStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
+	{{- if $m.Implementation }}
+	{{ $m.Implementation }}
+	{{- else }}
+	panic(fmt.Errorf("not implemented: Subscription.{{ $m.Field.GoFieldName }}"))
 	{{- end }}
 }
 {{ end }}
