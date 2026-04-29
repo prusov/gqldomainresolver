@@ -144,6 +144,78 @@ func TestGroupBySchemaFile_Empty(t *testing.T) {
 	}
 }
 
+func TestHasRootField(t *testing.T) {
+	mutObj := makeObject("Mutation", true)
+	queryObj := makeObject("Query", true)
+	subObj := makeObject("Subscription", true)
+	todoObj := makeObject("Todo", false)
+
+	fields := []*domainField{
+		{Object: mutObj, Field: makeFieldWithPos("CreateTodo", mutObj, todoSchema)},
+		{Object: todoObj, Field: makeFieldWithPos("User", todoObj, todoSchema)},
+	}
+
+	if !hasRootField(fields, "Mutation") {
+		t.Error("expected hasRootField Mutation = true")
+	}
+	if hasRootField(fields, "Query") {
+		t.Error("expected hasRootField Query = false")
+	}
+	if hasRootField(fields, "Subscription") {
+		t.Error("expected hasRootField Subscription = false")
+	}
+	// non-root field with same name shouldn't count.
+	if hasRootField([]*domainField{{Object: todoObj, Field: makeFieldWithPos("Mutation", todoObj, todoSchema)}}, "Mutation") {
+		t.Error("non-root field must not register as root")
+	}
+
+	all := []*domainField{
+		{Object: mutObj, Field: makeFieldWithPos("M", mutObj, todoSchema)},
+		{Object: queryObj, Field: makeFieldWithPos("Q", queryObj, todoSchema)},
+		{Object: subObj, Field: makeFieldWithPos("S", subObj, todoSchema)},
+	}
+	for _, name := range []string{"Mutation", "Query", "Subscription"} {
+		if !hasRootField(all, name) {
+			t.Errorf("expected hasRootField %s = true", name)
+		}
+	}
+}
+
+func TestBuildDomainFile(t *testing.T) {
+	mutObj := makeObject("Mutation", true)
+	queryObj := makeObject("Query", true)
+	subObj := makeObject("Subscription", true)
+	todoObj := makeObjectWithPos("Todo", false, todoSchema)
+
+	fg := &fileGroup{
+		fields: []*domainField{
+			{Object: mutObj, Field: makeFieldWithPos("CreateTodo", mutObj, todoSchema)},
+			{Object: queryObj, Field: makeFieldWithPos("Todos", queryObj, todoSchema)},
+			{Object: subObj, Field: makeFieldWithPos("TodoChanged", subObj, todoSchema)},
+			{Object: todoObj, Field: makeFieldWithPos("User", todoObj, todoSchema)},
+		},
+		objects: []*codegen.Object{todoObj},
+	}
+
+	build := buildDomainFile(fg)
+
+	if len(build.MutationMethods) != 1 || build.MutationMethods[0].Field.GoFieldName != "CreateTodo" {
+		t.Errorf("MutationMethods = %v", build.MutationMethods)
+	}
+	if len(build.QueryMethods) != 1 || build.QueryMethods[0].Field.GoFieldName != "Todos" {
+		t.Errorf("QueryMethods = %v", build.QueryMethods)
+	}
+	if len(build.SubscriptionMethods) != 1 || build.SubscriptionMethods[0].Field.GoFieldName != "TodoChanged" {
+		t.Errorf("SubscriptionMethods = %v", build.SubscriptionMethods)
+	}
+	if len(build.ObjectMethods) != 1 || build.ObjectMethods[0].Field.GoFieldName != "User" {
+		t.Errorf("ObjectMethods = %v", build.ObjectMethods)
+	}
+	if len(build.Objects) != 1 || build.Objects[0].Name != "Todo" {
+		t.Errorf("Objects = %v", build.Objects)
+	}
+}
+
 // helpers for readable error messages
 
 func groupKeys(m map[string]*fileGroup) []string {

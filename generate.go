@@ -22,33 +22,15 @@ type domainData struct {
 	objects []*codegen.Object
 }
 
-// hasRootMutation reports whether the domain has any root Mutation fields.
-func (d *domainData) hasRootMutation() bool {
-	for _, f := range d.fields {
-		if f.Object.Root && f.Object.Name == "Mutation" {
+// hasRootField reports whether fields contains a resolver field on the
+// root type named rootName ("Mutation" / "Query" / "Subscription").
+func hasRootField(fields []*domainField, rootName string) bool {
+	for _, f := range fields {
+		if f.Object.Root && f.Object.Name == rootName {
 			return true
 		}
 	}
-	return false
-}
 
-// hasRootQuery reports whether the domain has any root Query fields.
-func (d *domainData) hasRootQuery() bool {
-	for _, f := range d.fields {
-		if f.Object.Root && f.Object.Name == "Query" {
-			return true
-		}
-	}
-	return false
-}
-
-// hasRootSubscription reports whether the domain has any root Subscription fields.
-func (d *domainData) hasRootSubscription() bool {
-	for _, f := range d.fields {
-		if f.Object.Root && f.Object.Name == "Subscription" {
-			return true
-		}
-	}
 	return false
 }
 
@@ -98,15 +80,13 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			return fmt.Errorf("mkdir %s: %w", domainDir, err)
 		}
 
-		// newASTRewriter returns nil if the package doesn't exist yet — intentionally ignored.
-		// On first run rw will be nil; renderDomainFile handles that case.
+		// On first run rw is nil (no package yet); renderDomainFile handles that.
 		rw, _ := newASTRewriter(domainDir)
 
 		groups := groupBySchemaFile(d.fields, d.objects)
 
-		// Determine which file owns the Mutation/Query struct decls. Pick the
-		// alphabetically first base name that has root fields of that kind so
-		// the type is declared exactly once per domain package.
+		// Pick the alphabetically first base name with root fields of each kind
+		// so the type is declared exactly once per domain package.
 		bases := make([]string, 0, len(groups))
 		for b := range groups {
 			bases = append(bases, b)
@@ -118,13 +98,13 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 		subscriptionOwner := ""
 		for _, b := range bases {
 			fg := groups[b]
-			if mutationOwner == "" && fg.hasRootMutation() {
+			if mutationOwner == "" && hasRootField(fg.fields, "Mutation") {
 				mutationOwner = b
 			}
-			if queryOwner == "" && fg.hasRootQuery() {
+			if queryOwner == "" && hasRootField(fg.fields, "Query") {
 				queryOwner = b
 			}
-			if subscriptionOwner == "" && fg.hasRootSubscription() {
+			if subscriptionOwner == "" && hasRootField(fg.fields, "Subscription") {
 				subscriptionOwner = b
 			}
 		}
@@ -152,8 +132,8 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 }
 
 // buildDomainFile classifies the fields in a fileGroup into the categories
-// that domainTemplate consumes (mutation methods, query methods, object methods,
-// non-root object structs).
+// that domainTemplate consumes (mutation/query/subscription methods, object
+// methods, and non-root object structs).
 func buildDomainFile(fg *fileGroup) *domainFileBuild {
 	build := &domainFileBuild{Objects: fg.objects}
 
@@ -174,12 +154,15 @@ func buildDomainFile(fg *fileGroup) *domainFileBuild {
 	return build
 }
 
-// renderDomainConstructors emits domain_resolvers.go in the root resolver package.
-// It owns:
-//   - the DomainResolvers struct value-embedding every <Domain>Mutation/Query
-//     so root-field methods are promoted up to mutationResolver/queryResolver.
-//   - Mutation()/Query() constructors and the mutationResolver/queryResolver wrappers.
+// renderDomainConstructors emits domain_resolvers.go in the root resolver
+// package. It owns:
+//   - the DomainResolvers struct that value-embeds every <Domain>Mutation/Query
+//     so root-field methods are promoted up to mutationResolver/queryResolver;
+//   - Mutation()/Query()/Subscription() constructors and their wrapper structs;
 //   - per-object constructors like (r *Resolver) Todo() returning &todos.TodoResolver{}.
+//
+// The import path for domain packages is derived from data.Config.Resolver.ImportPath()
+// — the plugin is module-agnostic.
 func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string]*domainData) error {
 	type ctor struct {
 		TypeName string // "Todo"
@@ -193,21 +176,23 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 	var ctors []ctor
 	var embeds []embed
 	domainSet := map[string]bool{}
+	hasSubscription := false
 
 	for domain, d := range domains {
 		prefix := domainStructPrefix(domain)
 
-		if d.hasRootMutation() {
+		if hasRootField(d.fields, "Mutation") {
 			embeds = append(embeds, embed{TypeName: prefix + "Mutation", Domain: domain})
 			domainSet[domain] = true
 		}
-		if d.hasRootQuery() {
+		if hasRootField(d.fields, "Query") {
 			embeds = append(embeds, embed{TypeName: prefix + "Query", Domain: domain})
 			domainSet[domain] = true
 		}
-		if d.hasRootSubscription() {
+		if hasRootField(d.fields, "Subscription") {
 			embeds = append(embeds, embed{TypeName: prefix + "Subscription", Domain: domain})
 			domainSet[domain] = true
+			hasSubscription = true
 		}
 
 		for _, obj := range d.objects {
@@ -220,32 +205,19 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		return nil
 	}
 
-	hasSubscription := false
-	for _, obj := range data.Objects {
-		if obj.Root && obj.Name == "Subscription" {
-			for _, f := range obj.Fields {
-				if f.IsResolver {
-					hasSubscription = true
-					break
-				}
-			}
-			if hasSubscription {
-				break
-			}
-		}
-	}
-
 	sort.Slice(ctors, func(i, j int) bool { return ctors[i].TypeName < ctors[j].TypeName })
 	sort.Slice(embeds, func(i, j int) bool {
 		if embeds[i].Domain != embeds[j].Domain {
 			return embeds[i].Domain < embeds[j].Domain
 		}
+
 		return embeds[i].TypeName < embeds[j].TypeName
 	})
 
+	resolverImport := data.Config.Resolver.ImportPath()
 	domainImports := make([]string, 0, len(domainSet))
 	for d := range domainSet {
-		domainImports = append(domainImports, p.importPrefix+d)
+		domainImports = append(domainImports, resolverImport+"/"+d)
 	}
 	sort.Strings(domainImports)
 
@@ -274,33 +246,6 @@ type fileGroup struct {
 	objects []*codegen.Object
 }
 
-func (fg *fileGroup) hasRootMutation() bool {
-	for _, f := range fg.fields {
-		if f.Object.Root && f.Object.Name == "Mutation" {
-			return true
-		}
-	}
-	return false
-}
-
-func (fg *fileGroup) hasRootQuery() bool {
-	for _, f := range fg.fields {
-		if f.Object.Root && f.Object.Name == "Query" {
-			return true
-		}
-	}
-	return false
-}
-
-func (fg *fileGroup) hasRootSubscription() bool {
-	for _, f := range fg.fields {
-		if f.Object.Root && f.Object.Name == "Subscription" {
-			return true
-		}
-	}
-	return false
-}
-
 // groupBySchemaFile groups fields and objects by schema file base name.
 // "todos/todo.graphqls" → "todo" → fileGroup{...}
 func groupBySchemaFile(fields []*domainField, objects []*codegen.Object) map[string]*fileGroup {
@@ -311,6 +256,7 @@ func groupBySchemaFile(fields []*domainField, objects []*codegen.Object) map[str
 		if groups[base] == nil {
 			groups[base] = &fileGroup{}
 		}
+
 		return groups[base]
 	}
 
@@ -321,7 +267,7 @@ func groupBySchemaFile(fields []*domainField, objects []*codegen.Object) map[str
 
 	for _, obj := range objects {
 		g := getGroup(obj.Position.Src.Name)
-		// Deduplicate: an object may appear multiple times via different fields.
+		// An object may appear multiple times via different fields — dedupe.
 		found := false
 		for _, o := range g.objects {
 			if o.Name == obj.Name {

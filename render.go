@@ -150,6 +150,19 @@ func domainStructPrefix(domain string) string {
 	return "Mixin" + strings.ToUpper(domain[:1]) + domain[1:]
 }
 
+// restoreImpls fills in the Implementation field of each method by reading
+// the previous body from disk via the AST rewriter. receiverType returns the
+// receiver type name to look up for a given method (the same name for all
+// root methods, per-object for ObjectMethods).
+func restoreImpls(methods []*domainMethodBuild, rw *astRewriter, receiverType func(*domainMethodBuild) string) {
+	if rw == nil {
+		return
+	}
+	for _, m := range methods {
+		m.Implementation = strings.TrimSpace(rw.getMethodBody(receiverType(m), m.Field.GoFieldName))
+	}
+}
+
 func renderDomainFile(
 	data *codegen.Data,
 	pkgName string,
@@ -162,34 +175,10 @@ func renderDomainFile(
 	queryType := prefix + "Query"
 	subscriptionType := prefix + "Subscription"
 
-	for _, m := range build.MutationMethods {
-		impl := ""
-		if rw != nil {
-			impl = rw.getMethodBody(mutationType, m.Field.GoFieldName)
-		}
-		m.Implementation = strings.TrimSpace(impl)
-	}
-	for _, m := range build.QueryMethods {
-		impl := ""
-		if rw != nil {
-			impl = rw.getMethodBody(queryType, m.Field.GoFieldName)
-		}
-		m.Implementation = strings.TrimSpace(impl)
-	}
-	for _, m := range build.SubscriptionMethods {
-		impl := ""
-		if rw != nil {
-			impl = rw.getMethodBody(subscriptionType, m.Field.GoFieldName)
-		}
-		m.Implementation = strings.TrimSpace(impl)
-	}
-	for _, m := range build.ObjectMethods {
-		impl := ""
-		if rw != nil {
-			impl = rw.getMethodBody(m.Object.Name+"Resolver", m.Field.GoFieldName)
-		}
-		m.Implementation = strings.TrimSpace(impl)
-	}
+	restoreImpls(build.MutationMethods, rw, func(*domainMethodBuild) string { return mutationType })
+	restoreImpls(build.QueryMethods, rw, func(*domainMethodBuild) string { return queryType })
+	restoreImpls(build.SubscriptionMethods, rw, func(*domainMethodBuild) string { return subscriptionType })
+	restoreImpls(build.ObjectMethods, rw, func(m *domainMethodBuild) string { return m.Object.Name + "Resolver" })
 
 	if len(build.MutationMethods) > 0 {
 		build.MutationStructName = mutationType

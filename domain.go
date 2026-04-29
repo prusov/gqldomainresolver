@@ -33,6 +33,7 @@ func extractDomain(schemaPath string) string {
 	if !isValidDomain(parent) {
 		return ""
 	}
+
 	return parent
 }
 
@@ -44,5 +45,6 @@ func isValidDomain(name string) bool {
 	if strings.Contains(name, "-") {
 		return false
 	}
+
 	return !goKeywords[name]
 }

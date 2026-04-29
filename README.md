@@ -38,16 +38,25 @@ Names that are Go keywords, contain dashes, or equal `"schema"` are skipped.
 
 | GraphQL location | Generated Go |
 |---|---|
-| `Mutation.createTodo` | free func `MutationCreateTodo(ctx, input)` |
-| `Query.todos` | free func `QueryTodos(ctx)` |
+| `Mutation.createTodo` | method `(m *MixinTodosMutation) CreateTodo(ctx, input)` |
+| `Query.todos` | method `(q *MixinTodosQuery) Todos(ctx)` |
+| `Subscription.todoChanged` | method `(s *MixinTodosSubscription) TodoChanged(ctx)` |
 | field resolver on `Todo.user` | method `(r *TodoResolver) User(ctx, obj)` |
+
+The `Mixin` prefix keeps the struct name from starting with the package name
+(otherwise `revive`'s `package-stutters` rule triggers, e.g. `todos.TodosMutation`).
+Methods reach the root `Resolver` via Go method promotion through `DomainResolvers`.
+
+Root-package fields **without** a domain (e.g. `Query.hello` defined in the root
+`schema.graphqls`) keep their classic resolver method on the root package and
+their bodies are preserved across regeneration — write them by hand.
 
 ## Connecting to a project
 
 ### 1. Add the dependency
 
 ```bash
-go get git.dd-team.online/dd/gqlgendomain/plugin/domainresolver
+go get <module-path>/plugin/domainresolver
 ```
 
 ### 2. Create a custom gqlgen entry point
@@ -64,7 +73,7 @@ import (
 
     "github.com/99designs/gqlgen/api"
     "github.com/99designs/gqlgen/codegen/config"
-    "git.dd-team.online/dd/gqlgendomain/plugin/domainresolver"
+    "<module-path>/plugin/domainresolver"
 )
 
 func main() {
@@ -128,3 +137,37 @@ graph/schema/
 On re-generation the plugin reads existing method bodies from disk via AST parsing and replays them into the new file. Hand-written implementations inside domain packages survive regeneration automatically.
 
 Root-package stubs (the `.resolvers.go` files) also preserve `prevImpl` if the plugin returns it — this applies to non-domain fields (e.g. manually implemented `Query.hello`).
+
+Helper functions hand-written in a domain file but no longer referenced by a generated method don't disappear silently — they're moved into a commented-out `// !!! WARNING !!!` block at the bottom of the file. Salvage what you need, then delete the block.
+
+## Generated layout
+
+After `go run ./cmd/gqlgen` you get:
+
+```
+graph/resolver/
+  resolver.go               ← you write this once: type Resolver struct{ DomainResolvers }
+  domain_resolvers.go       ← generated: DomainResolvers, mutationResolver/queryResolver, per-object constructors
+  schema.resolvers.go       ← generated: methods for root fields without a domain (e.g. Query.hello)
+  todos/
+    todo.go                 ← generated: MixinTodosMutation, MixinTodosQuery, TodoResolver methods
+  tasks/
+    task.go                 ← generated: MixinTasksMutation, MixinTasksQuery, ...
+```
+
+The import path used in `domain_resolvers.go` is derived automatically from `resolver.dir` / `resolver.package` in `gqlgen.yml` — the plugin is module-agnostic.
+
+## Limitations
+
+- **Domain name = parent directory name** of the schema file. It must be a valid Go identifier: no dashes, not a Go keyword, not `schema`. Invalid names are silently skipped (the field falls back to a panic stub in the root package).
+- A given resolver field belongs to exactly one domain — the one of its `.graphqls` file. Splitting one root field across multiple domain packages isn't supported.
+- The `resolver_template` in `gqlgen.yml` must be `plugin/domainresolver/templates/resolver.gotpl` (or a compatible template that skips method emission when `Implement()` returns `""`). Using gqlgen's default template will cause duplicate method declarations on the root resolver.
+- Only one plugin per gqlgen run can implement `ResolverImplementer` — don't combine with another plugin that hooks the same interface.
+
+## Troubleshooting
+
+**Compiled but the resolver isn't being called.** Check that the schema file lives in a directory whose name is a valid Go identifier (`graph/schema/business-process/x.graphqls` → invalid because of the dash; the field becomes a panic stub in the root package). Either rename the directory or implement the field manually.
+
+**Old code reappeared after I renamed a method.** Look for the `// !!! WARNING !!!` block near the bottom of the affected domain file — gqlgen preserves orphaned function bodies there so you don't lose work. Move what you still need elsewhere, then delete the block.
+
+**`graph/generated` got imported in a domain package.** Domain packages must be `graph/generated`-free by design. If you see the import, it usually means a hand-written method body references a generated type directly. Use the model package instead (`model.Todo`, etc.) — the generated interfaces are satisfied structurally, no import required.
