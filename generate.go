@@ -41,6 +41,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 	resolverDir := data.Config.Resolver.Dir()
 
 	domains := map[string]*domainData{}
+	migratedBases := map[string]bool{}
 
 	for _, obj := range data.Objects {
 		for _, f := range obj.Fields {
@@ -53,6 +54,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			if domain == "" {
 				continue
 			}
+			migratedBases[schemaBase(f.Position.Src.Name)] = true
 			if domains[domain] == nil {
 				domains[domain] = &domainData{}
 			}
@@ -129,7 +131,27 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 		return fmt.Errorf("render domain constructors: %w", err)
 	}
 
+	// Every resolver field in a schema file shares the same domain (extracted
+	// from the file path). When that domain is enabled, Implement() returns ""
+	// for all of its fields, so the safety-net template emits zero methods —
+	// leaving resolvergen's <base>.resolvers.go with header+imports only.
+	// We know these basenames from the loop above, so we can delete the files
+	// directly without scanning the resolver dir.
+	for base := range migratedBases {
+		path := filepath.Join(resolverDir, base+".resolvers.go")
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+
 	return nil
+}
+
+// schemaBase returns the file name of a schema path without the .graphqls
+// suffix (e.g. "todos/todo.graphqls" → "todo"). Matches the basename used by
+// gqlgen's resolvergen when naming output files.
+func schemaBase(schemaPath string) string {
+	return strings.TrimSuffix(filepath.Base(filepath.ToSlash(schemaPath)), ".graphqls")
 }
 
 // buildDomainFile classifies the fields in a fileGroup into the categories
@@ -306,7 +328,7 @@ func groupBySchemaFile(fields []*domainField, objects []*codegen.Object) map[str
 	groups := map[string]*fileGroup{}
 
 	getGroup := func(schemaPath string) *fileGroup {
-		base := strings.TrimSuffix(filepath.Base(filepath.ToSlash(schemaPath)), ".graphqls")
+		base := schemaBase(schemaPath)
 		if groups[base] == nil {
 			groups[base] = &fileGroup{}
 		}
