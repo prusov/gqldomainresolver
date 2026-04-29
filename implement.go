@@ -23,7 +23,7 @@ import (
 //   - non-root field → panic stub (defensive; constructor returns a domain-package
 //     resolver directly so the template should not emit these).
 func (p *Plugin) Implement(prevImpl string, field *codegen.Field) string {
-	domain := extractDomain(field.Position.Src.Name)
+	domain := p.domainFor(field.Position.Src.Name)
 
 	if field.Object.Root && domain != "" {
 		return ""

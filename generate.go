@@ -48,7 +48,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			}
 			// Group by the field's schema file, not the object's — needed for
 			// root types (Mutation/Query) whose fields span multiple schema files.
-			domain := extractDomain(f.Position.Src.Name)
+			domain := p.domainFor(f.Position.Src.Name)
 			if domain == "" {
 				continue
 			}

@@ -81,7 +81,11 @@ func main() {
     if err != nil {
         log.Fatal(err)
     }
-    if err := api.Generate(cfg, api.AddPlugin(domainresolver.New())); err != nil {
+    if err := api.Generate(cfg, api.AddPlugin(
+        domainresolver.New(
+            domainresolver.WithEnabledDomains("todos", "users"),
+        ),
+    )); err != nil {
         log.Fatal(err)
     }
 }
@@ -119,6 +123,66 @@ type Resolver struct {
 ```
 
 Everything else (`DomainResolvers`, per-domain Mutation/Query structs, object constructors) is generated into `graph/resolver/domain_resolvers.go` on each `go run ./cmd/gqlgen` run.
+
+## Incremental migration with `WithEnabledDomains`
+
+The plugin is **opt-in per domain**. With an empty allowlist (`New()` with no
+options) the plugin is a no-op — adding it to a project introduces zero diff
+in your existing resolvers. Domains are migrated one at a time by adding their
+names to `WithEnabledDomains`.
+
+This is the recommended path for retrofitting the plugin into an existing
+large project, where a "big-bang" migration of every domain in one PR is
+impractical.
+
+### Recommended rollout
+
+1. **PR 1 — wire the plugin without migrating anything.**
+
+   ```go
+   api.AddPlugin(domainresolver.New()) // empty allowlist → no-op
+   ```
+
+   Set `resolver_template` in `gqlgen.yml`, add `cmd/gqlgen`, run
+   `go run ./cmd/gqlgen`. Result: no changes to `graph/resolver/**`. The PR
+   is purely infrastructure — easy to review, trivially revertable.
+
+2. **PR 2..N — migrate one domain per PR.**
+
+   ```go
+   domainresolver.New(
+       domainresolver.WithEnabledDomains("todos"), // add one name at a time
+   )
+   ```
+
+   Each PR:
+   - Adds one name to the list.
+   - Regenerates code (`go run ./cmd/gqlgen`) — produces a new
+     `graph/resolver/<domain>/` package and rewrites the corresponding root
+     stubs to delegate via promotion.
+   - Moves any hand-written resolver bodies for that domain from the root
+     `*.resolvers.go` into the generated domain file (the AST rewriter
+     preserves method bodies on subsequent regenerations, but the **first**
+     migration of a domain has to copy bodies in by hand — they live in the
+     root file before the domain package exists).
+
+3. **Roll back a domain by removing its name** from the list and regenerating.
+   The domain falls back to root-package resolvers; bodies you copied in step 2
+   stay in the domain package directory (delete it manually if you want a
+   clean revert).
+
+### Behavior of the allowlist
+
+| Input | Effect |
+|---|---|
+| Empty / `nil` | Plugin is a no-op for **every** schema file. |
+| `["todos"]` | Only `todos` is migrated; all other domains use root-package resolvers. |
+| `["schema"]`, `["with-dash"]`, `["import"]` | Silently ignored (fail `isValidDomain`). Logged at WARN. |
+| `["nonexistent"]` | Silently tolerated — useful for adding a name before its schema files land. |
+| `["todos", "todos"]` | Deduplicated to `["todos"]`. |
+
+Names are compared as-is after the same `isValidDomain` check used for schema
+directory parsing — they're case-sensitive and must be valid Go identifiers.
 
 ## Schema layout
 

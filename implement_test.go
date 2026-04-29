@@ -50,7 +50,7 @@ func TestImplement(t *testing.T) {
 		},
 	}
 
-	p := New()
+	p := New(WithEnabledDomains("todos"))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := p.Implement(tt.prevImpl, tt.field.Field)
