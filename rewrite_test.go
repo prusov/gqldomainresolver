@@ -17,7 +17,7 @@ func writeFile(t *testing.T, dir, name, content string) {
 // TestASTRewriter_GetMethodBody_PointerReceiver extracts body from a pointer-receiver method.
 func TestASTRewriter_GetMethodBody_PointerReceiver(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "todo.go", `package todos
+	writeFile(t, dir, "todo.resolvers.go", `package todos
 
 type TodoResolver struct{}
 
@@ -41,7 +41,7 @@ func (r *TodoResolver) Something() (string, error) {
 // TestASTRewriter_GetMethodBody_ValueReceiver extracts body from a value-receiver method.
 func TestASTRewriter_GetMethodBody_ValueReceiver(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "todo.go", `package todos
+	writeFile(t, dir, "todo.resolvers.go", `package todos
 
 type TodoResolver struct{}
 
@@ -65,7 +65,7 @@ func (r TodoResolver) Something() string {
 // TestASTRewriter_GetMethodBody_NotFound returns empty string for an unknown method.
 func TestASTRewriter_GetMethodBody_NotFound(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "todo.go", `package todos
+	writeFile(t, dir, "todo.resolvers.go", `package todos
 
 type TodoResolver struct{}
 
@@ -86,7 +86,7 @@ func (r *TodoResolver) User() string { return "user" }
 // TestASTRewriter_GetMethodBody_WrongType returns empty if receiver type doesn't match.
 func TestASTRewriter_GetMethodBody_WrongType(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "todo.go", `package todos
+	writeFile(t, dir, "todo.resolvers.go", `package todos
 
 type UserResolver struct{}
 
@@ -121,7 +121,7 @@ func TestNewASTRewriter_EmptyDir(t *testing.T) {
 // only inside copied method bodies were dropped on regeneration.
 func TestASTRewriter_ExistingImports_Plain(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "todo.go", `package todos
+	writeFile(t, dir, "todo.resolvers.go", `package todos
 
 import (
 	"context"
@@ -141,7 +141,7 @@ func (r *TodoResolver) Something(ctx context.Context) string {
 		t.Fatalf("newASTRewriter: %v", err)
 	}
 
-	got := rw.existingImports(filepath.Join(dir, "todo.go"))
+	got := rw.existingImports(filepath.Join(dir, "todo.resolvers.go"))
 	want := map[string]string{
 		"context":                      "",
 		"example.com/foo/service/todo": "",
@@ -164,7 +164,7 @@ func (r *TodoResolver) Something(ctx context.Context) string {
 // TestASTRewriter_ExistingImports_Aliased captures named, blank and dot imports.
 func TestASTRewriter_ExistingImports_Aliased(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "todo.go", `package todos
+	writeFile(t, dir, "todo.resolvers.go", `package todos
 
 import (
 	myalias "example.com/foo"
@@ -181,7 +181,7 @@ var _ = Y
 		t.Fatalf("newASTRewriter: %v", err)
 	}
 
-	got := rw.existingImports(filepath.Join(dir, "todo.go"))
+	got := rw.existingImports(filepath.Join(dir, "todo.resolvers.go"))
 	want := map[string]string{
 		"example.com/foo":   "myalias",
 		"example.com/blank": "_",
@@ -206,13 +206,13 @@ var _ = Y
 // requested file, not from siblings in the same dir.
 func TestASTRewriter_ExistingImports_PerFile(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, dir, "todo.go", `package todos
+	writeFile(t, dir, "todo.resolvers.go", `package todos
 
 import "example.com/todo"
 
 var _ = todo.X
 `)
-	writeFile(t, dir, "user.go", `package todos
+	writeFile(t, dir, "user.resolvers.go", `package todos
 
 import "example.com/user"
 
@@ -224,15 +224,40 @@ var _ = user.Y
 		t.Fatalf("newASTRewriter: %v", err)
 	}
 
-	got := rw.existingImports(filepath.Join(dir, "todo.go"))
+	got := rw.existingImports(filepath.Join(dir, "todo.resolvers.go"))
 	if len(got) != 1 || got[0].ImportPath != "example.com/todo" {
-		t.Errorf("existingImports(todo.go) = %v, want [example.com/todo]", got)
+		t.Errorf("existingImports(todo.resolvers.go) = %v, want [example.com/todo]", got)
 	}
 }
 
 // TestASTRewriter_ExistingImports_MissingFile returns nil when the requested
 // file isn't part of the parsed set.
 func TestASTRewriter_ExistingImports_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "todo.resolvers.go", `package todos
+
+import "example.com/todo"
+
+var _ = todo.X
+`)
+
+	rw, err := newASTRewriter(dir)
+	if err != nil {
+		t.Fatalf("newASTRewriter: %v", err)
+	}
+
+	got := rw.existingImports(filepath.Join(dir, "missing.resolvers.go"))
+	if got != nil {
+		t.Errorf("existingImports(missing.resolvers.go) = %v, want nil", got)
+	}
+}
+
+// TestASTRewriter_ExistingImports_LegacyFallback verifies that a request for
+// "<base>.resolvers.go" falls back to "<base>.go" when only the legacy file
+// exists. Regression for the rename from <base>.go → <base>.resolvers.go:
+// without the fallback, hand-written imports captured in the legacy file would
+// be dropped on the very first regen after the rename.
+func TestASTRewriter_ExistingImports_LegacyFallback(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.go", `package todos
 
@@ -246,9 +271,9 @@ var _ = todo.X
 		t.Fatalf("newASTRewriter: %v", err)
 	}
 
-	got := rw.existingImports(filepath.Join(dir, "missing.go"))
-	if got != nil {
-		t.Errorf("existingImports(missing.go) = %v, want nil", got)
+	got := rw.existingImports(filepath.Join(dir, "todo.resolvers.go"))
+	if len(got) != 1 || got[0].ImportPath != "example.com/todo" {
+		t.Errorf("existingImports(todo.resolvers.go) = %v, want [example.com/todo] (legacy fallback)", got)
 	}
 }
 

@@ -92,29 +92,49 @@ func (rw *astRewriter) getMethodBody(typeName, methodName string) string {
 // a third-party package referenced solely in a method body) would be
 // dropped and the regenerated file would fail to compile.
 func (rw *astRewriter) existingImports(outFile string) []Import {
-	target, err := filepath.Abs(outFile)
-	if err != nil {
+	file := rw.fileFor(outFile)
+	if file == nil {
 		return nil
 	}
-	for filename, file := range rw.files {
-		abs, err := filepath.Abs(filename)
-		if err != nil || abs != target {
+	var imps []Import
+	for _, i := range file.Imports {
+		path, err := strconv.Unquote(i.Path.Value)
+		if err != nil {
 			continue
 		}
-		var imps []Import
-		for _, i := range file.Imports {
-			path, err := strconv.Unquote(i.Path.Value)
-			if err != nil {
+		alias := ""
+		if i.Name != nil {
+			alias = i.Name.Name
+		}
+		imps = append(imps, Import{Alias: alias, ImportPath: path})
+	}
+
+	return imps
+}
+
+// fileFor returns the parsed AST for outFile. As a transition aid for
+// projects upgrading from the older naming convention, if outFile ends in
+// ".resolvers.go" and no parsed file matches, it falls back to the legacy
+// "<base>.go" sibling — letting hand-written imports and helper funcs in
+// the old file survive the rename.
+func (rw *astRewriter) fileFor(outFile string) *goast.File {
+	candidates := []string{outFile}
+	if strings.HasSuffix(outFile, ".resolvers.go") {
+		candidates = append(candidates, strings.TrimSuffix(outFile, ".resolvers.go")+".go")
+	}
+	for _, c := range candidates {
+		target, err := filepath.Abs(c)
+		if err != nil {
+			continue
+		}
+		for filename, file := range rw.files {
+			abs, err := filepath.Abs(filename)
+			if err != nil || abs != target {
 				continue
 			}
-			alias := ""
-			if i.Name != nil {
-				alias = i.Name.Name
-			}
-			imps = append(imps, Import{Alias: alias, ImportPath: path})
-		}
 
-		return imps
+			return file
+		}
 	}
 
 	return nil
@@ -123,11 +143,15 @@ func (rw *astRewriter) existingImports(outFile string) []Import {
 // remainingFuncs returns the source of all FuncDecl declarations in outFile that
 // were not consumed by getMethodBody. Used to preserve hand-written helpers.
 func (rw *astRewriter) remainingFuncs(outFile string) string {
-	file, ok := rw.files[outFile]
-	if !ok {
+	file := rw.fileFor(outFile)
+	if file == nil {
 		return ""
 	}
-	src, err := os.ReadFile(outFile)
+	srcPath := outFile
+	if _, ok := rw.files[outFile]; !ok && strings.HasSuffix(outFile, ".resolvers.go") {
+		srcPath = strings.TrimSuffix(outFile, ".resolvers.go") + ".go"
+	}
+	src, err := os.ReadFile(srcPath)
 	if err != nil {
 		return ""
 	}
@@ -283,8 +307,7 @@ func renderDomainFile(
 }
 
 // renderRootKindFile renders one of the per-kind constructor files
-// (domain_mutation_resolvers.go / domain_query_resolvers.go /
-// domain_subscription_resolvers.go).
+// (mutation.resolvers.go / query.resolvers.go / subscription.resolvers.go).
 func renderRootKindFile(data *codegen.Data, outFile string, build any) error {
 	return templates.Render(templates.Options{
 		PackageName: data.Config.Resolver.Package,
@@ -295,7 +318,7 @@ func renderRootKindFile(data *codegen.Data, outFile string, build any) error {
 	})
 }
 
-// renderObjectCtorsFile renders domain_object_resolvers.go — per-object constructors
+// renderObjectCtorsFile renders object.resolvers.go — per-object constructors
 // for migrated domains plus wrapper structs/constructors for non-migrated
 // domains.
 func renderObjectCtorsFile(data *codegen.Data, outFile string, build any) error {
@@ -348,7 +371,7 @@ type {{ .WrapperName }} struct {
 }
 `
 
-// objectCtorsTemplate emits domain_object_resolvers.go — per-object constructors
+// objectCtorsTemplate emits object.resolvers.go — per-object constructors
 // for migrated domains plus root-package wrappers for non-migrated domains.
 //
 // The non-migrated wrappers mirror what default gqlgen would emit, so a

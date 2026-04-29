@@ -6,13 +6,13 @@
      Those methods are provided through Go method promotion: each wrapper
      (mutationResolver / queryResolver / subscriptionResolver) embeds the
      kind-specific Domain{Mutation,Query,Subscription}Resolvers struct
-     (each generated in its own domain_<kind>_resolvers.go file), which
+     (each generated in its own <kind>.resolvers.go file), which
      embeds each matching per-domain Mixin* struct.
 
      The plugin also owns:
        - the Resolver struct itself (declared in graph/resolver/resolver.go),
-       - the mutation/query/subscription wrappers (in domain_<kind>_resolvers.go),
-       - per-object constructors like (r *Resolver) Todo() (in domain_object_resolvers.go),
+       - the mutation/query/subscription wrappers (in <kind>.resolvers.go),
+       - per-object constructors like (r *Resolver) Todo() (in object.resolvers.go),
      so this template no longer emits any of them. */}}
 {{ reserveImport "context"  }}
 {{ reserveImport "fmt"  }}

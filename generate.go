@@ -114,7 +114,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 
 		for _, base := range bases {
 			fg := groups[base]
-			outFile := filepath.Join(domainDir, base+".go")
+			outFile := filepath.Join(domainDir, base+".resolvers.go")
 
 			build := buildDomainFile(fg)
 			build.EmitMutationStruct = base == mutationOwner
@@ -123,6 +123,14 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 
 			if err := renderDomainFile(data, domain, outFile, build, rw, p.migratedImpls); err != nil {
 				return fmt.Errorf("render %s: %w", outFile, err)
+			}
+
+			// Older plugin versions wrote <base>.go (no .resolvers suffix) into
+			// domain dirs. Remove on every run — cheap, idempotent, no-op once
+			// the migration is done.
+			stale := filepath.Join(domainDir, base+".go")
+			if err := os.Remove(stale); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove %s: %w", stale, err)
 			}
 		}
 	}
@@ -225,13 +233,13 @@ func (p *Plugin) collectRootCtors(objects []*codegen.Object) []rootCtor {
 // renderDomainConstructors emits the constructor files in the root resolver
 // package, one file per root kind plus an object-constructor file:
 //
-//   - domain_mutation_resolvers.go     — DomainMutationResolvers,
+//   - mutation.resolvers.go     — DomainMutationResolvers,
 //     Mutation() ctor, mutationResolver wrapper.
-//   - domain_query_resolvers.go        — DomainQueryResolvers,
+//   - query.resolvers.go        — DomainQueryResolvers,
 //     Query() ctor, queryResolver wrapper.
-//   - domain_subscription_resolvers.go — DomainSubscriptionResolvers,
+//   - subscription.resolvers.go — DomainSubscriptionResolvers,
 //     Subscription() ctor, subscriptionResolver wrapper.
-//   - domain_object_resolvers.go       — per-object constructors like
+//   - object.resolvers.go       — per-object constructors like
 //     (r *Resolver) Todo() returning &todos.TodoResolver{}, plus
 //     root-package wrappers for non-migrated domains (see rootCtor).
 //
@@ -284,16 +292,24 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		kind        string // "Mutation" / "Query" / "Subscription"
 		structName  string // "DomainMutationResolvers"
 		wrapperName string // "mutationResolver"
-		fileName    string // "domain_mutation_resolvers.go"
+		fileName    string // "mutation.resolvers.go"
+		legacyName  string // "domain_mutation_resolvers.go" — older plugin versions
 		embeds      []embed
 	}{
-		{hasMutation, "Mutation", "DomainMutationResolvers", "mutationResolver", "domain_mutation_resolvers.go", mutationEmbeds},
-		{hasQuery, "Query", "DomainQueryResolvers", "queryResolver", "domain_query_resolvers.go", queryEmbeds},
-		{hasSubscription, "Subscription", "DomainSubscriptionResolvers", "subscriptionResolver", "domain_subscription_resolvers.go", subscriptionEmbeds},
+		{hasMutation, "Mutation", "DomainMutationResolvers", "mutationResolver", "mutation.resolvers.go", "domain_mutation_resolvers.go", mutationEmbeds},
+		{hasQuery, "Query", "DomainQueryResolvers", "queryResolver", "query.resolvers.go", "domain_query_resolvers.go", queryEmbeds},
+		{hasSubscription, "Subscription", "DomainSubscriptionResolvers", "subscriptionResolver", "subscription.resolvers.go", "domain_subscription_resolvers.go", subscriptionEmbeds},
 	}
 
 	for _, k := range kinds {
 		outFile := filepath.Join(resolverDir, k.fileName)
+
+		// Remove the legacy name on every run so projects upgrading from older
+		// plugin versions don't end up with duplicate declarations.
+		legacyFile := filepath.Join(resolverDir, k.legacyName)
+		if err := os.Remove(legacyFile); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", legacyFile, err)
+		}
 
 		if !k.hasRoot {
 			// Root kind absent from the schema — make sure no stale file
@@ -336,7 +352,13 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		return fmt.Errorf("remove %s: %w", staleAggregateFile, err)
 	}
 
-	objectFile := filepath.Join(resolverDir, "domain_object_resolvers.go")
+	objectFile := filepath.Join(resolverDir, "object.resolvers.go")
+
+	legacyObjectFile := filepath.Join(resolverDir, "domain_object_resolvers.go")
+	if err := os.Remove(legacyObjectFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", legacyObjectFile, err)
+	}
+
 	if len(ctors) == 0 && len(rootCtors) == 0 {
 		if err := os.Remove(objectFile); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", objectFile, err)
