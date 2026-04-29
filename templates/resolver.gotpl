@@ -3,14 +3,16 @@
 
      The plugin returns "" from Implement() for root fields that have a domain
      package, signaling this template to skip the method declaration entirely.
-     Those methods are provided through Go method promotion: Resolver embeds
-     DomainResolvers (generated in domain_resolvers.go) which embeds each
-     per-domain Mutation/Query struct.
+     Those methods are provided through Go method promotion: each wrapper
+     (mutationResolver / queryResolver / subscriptionResolver) embeds the
+     kind-specific Domain{Mutation,Query,Subscription}Resolvers struct
+     (each generated in its own domain_<kind>_resolvers.go file), which
+     embeds each matching per-domain Mixin* struct.
 
      The plugin also owns:
        - the Resolver struct itself (declared in graph/resolver/resolver.go),
-       - mutationResolver / queryResolver wrappers (in domain_resolvers.go),
-       - per-object constructors like (r *Resolver) Todo() (in domain_resolvers.go),
+       - the mutation/query/subscription wrappers (in domain_<kind>_resolvers.go),
+       - per-object constructors like (r *Resolver) Todo() (in domain_object_resolvers.go),
      so this template no longer emits any of them. */}}
 {{ reserveImport "context"  }}
 {{ reserveImport "fmt"  }}

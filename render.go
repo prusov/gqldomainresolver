@@ -282,24 +282,38 @@ func renderDomainFile(
 	})
 }
 
-// renderConstructorsFile renders the domain_resolvers.go file in the root resolver package.
-// build is a struct passed through to constructorsTemplate (see renderDomainConstructors).
-func renderConstructorsFile(data *codegen.Data, outFile string, build any) error {
+// renderRootKindFile renders one of the per-kind constructor files
+// (domain_mutation_resolvers.go / domain_query_resolvers.go /
+// domain_subscription_resolvers.go).
+func renderRootKindFile(data *codegen.Data, outFile string, build any) error {
 	return templates.Render(templates.Options{
 		PackageName: data.Config.Resolver.Package,
 		Filename:    outFile,
 		Data:        build,
 		Packages:    data.Config.Packages,
-		Template:    constructorsTemplate,
+		Template:    rootKindTemplate,
 	})
 }
 
-// constructorsTemplate emits domain_resolvers.go in the root resolver package.
-//
-// Method-promotion layout:
-//
-//	mutationResolver { Resolver *Resolver; DomainResolvers }
-//	queryResolver    { Resolver *Resolver; DomainResolvers }
+// renderObjectCtorsFile renders domain_object_resolvers.go — per-object constructors
+// for migrated domains plus wrapper structs/constructors for non-migrated
+// domains.
+func renderObjectCtorsFile(data *codegen.Data, outFile string, build any) error {
+	return templates.Render(templates.Options{
+		PackageName: data.Config.Resolver.Package,
+		Filename:    outFile,
+		Data:        build,
+		Packages:    data.Config.Packages,
+		Template:    objectCtorsTemplate,
+	})
+}
+
+// rootKindTemplate emits one root-kind file (Mutation, Query, or Subscription).
+// Each file owns:
+//   - the Domain<Kind>Resolvers struct that value-embeds every per-domain
+//     Mixin<Domain><Kind> struct;
+//   - the (r *Resolver) <Kind>() constructor that returns the wrapper;
+//   - the <kind>Resolver wrapper struct that embeds Domain<Kind>Resolvers.
 //
 // `Resolver` is a NAMED field (not embedded) on purpose: gqlgen requires
 // per-object constructors like (r *Resolver) Task() generated.TaskResolver
@@ -310,52 +324,39 @@ func renderConstructorsFile(data *codegen.Data, outFile string, build any) error
 // to user state, which manually written resolvers (e.g., Hello, Welcome)
 // can reach via `r.Resolver.<field>`.
 //
-// DomainResolvers is value-embedded twice — once in Resolver (so user code
-// can call r.CreateTodo() directly) and once in each wrapper (so the methods
-// reach the wrapper at depth 1 unambiguously). Both copies are zero-sized
-// since each per-domain Mutation/Query struct is empty.
-const constructorsTemplate = `
+// Splitting per root kind across files (and across structs) avoids
+// ambiguous selectors when a field name is reused across Query and
+// Subscription (e.g. `userNotifications` as both a query and a
+// subscription) — each wrapper sees only methods of its own kind.
+const rootKindTemplate = `
 {{ reserveImport .GeneratedPkg }}
 {{ range $imp := .DomainImports }}{{ reserveImport $imp }}{{ end }}
 
-type DomainResolvers struct {
+type {{ .StructName }} struct {
 {{- range $e := .Embeds }}
 	{{ $e.Domain }}.{{ $e.TypeName }}
 {{- end }}
 }
 
-{{ if .HasMutation }}
-func (r *Resolver) Mutation() generated.MutationResolver {
-	return &mutationResolver{Resolver: r}
+func (r *Resolver) {{ .Kind }}() generated.{{ .Kind }}Resolver {
+	return &{{ .WrapperName }}{Resolver: r}
 }
 
-type mutationResolver struct {
+type {{ .WrapperName }} struct {
 	Resolver *Resolver
-	DomainResolvers
+	{{ .StructName }}
 }
-{{ end }}
+`
 
-{{ if .HasQuery }}
-func (r *Resolver) Query() generated.QueryResolver {
-	return &queryResolver{Resolver: r}
-}
-
-type queryResolver struct {
-	Resolver *Resolver
-	DomainResolvers
-}
-{{ end }}
-
-{{ if .HasSubscription }}
-func (r *Resolver) Subscription() generated.SubscriptionResolver {
-	return &subscriptionResolver{Resolver: r}
-}
-
-type subscriptionResolver struct {
-	Resolver *Resolver
-	DomainResolvers
-}
-{{ end }}
+// objectCtorsTemplate emits domain_object_resolvers.go — per-object constructors
+// for migrated domains plus root-package wrappers for non-migrated domains.
+//
+// The non-migrated wrappers mirror what default gqlgen would emit, so a
+// project can keep existing field resolvers in *.resolvers.go
+// (e.g. (r *todoResolver) User) compiling before the domain is migrated.
+const objectCtorsTemplate = `
+{{ reserveImport .GeneratedPkg }}
+{{ range $imp := .DomainImports }}{{ reserveImport $imp }}{{ end }}
 
 {{ range $c := .Ctors }}
 func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
@@ -363,10 +364,6 @@ func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
 }
 {{ end }}
 
-{{/* Per-object ctors + wrapper structs for non-root types whose domain is not
-     enabled. Mirrors what default gqlgen would emit. Lets the project keep
-     existing field resolvers in *.resolvers.go (e.g. (r *todoResolver) User)
-     compiling before the domain is migrated. */}}
 {{ range $rc := .RootCtors }}
 func (r *Resolver) {{ $rc.TypeName }}() generated.{{ $rc.TypeName }}Resolver {
 	return &{{ $rc.WrapperLc }}{r}

@@ -184,7 +184,8 @@ type ctor struct {
 	Domain   string // "todos"
 }
 
-// embed is a per-domain root struct value-embedded into DomainResolvers.
+// embed is a per-domain root struct value-embedded into one of the
+// kind-specific Domain{Mutation,Query,Subscription}Resolvers structs.
 type embed struct {
 	TypeName string // "MixinTodosMutation"
 	Domain   string // "todos"
@@ -221,40 +222,44 @@ func (p *Plugin) collectRootCtors(objects []*codegen.Object) []rootCtor {
 	return out
 }
 
-// renderDomainConstructors emits domain_resolvers.go in the root resolver
-// package. It owns:
-//   - the DomainResolvers struct that value-embeds every <Domain>Mutation/Query
-//     so root-field methods are promoted up to mutationResolver/queryResolver;
-//   - Mutation()/Query()/Subscription() constructors and their wrapper structs;
-//   - per-object constructors like (r *Resolver) Todo() returning &todos.TodoResolver{};
-//   - root-package wrappers for non-migrated domains (see rootCtor).
+// renderDomainConstructors emits the constructor files in the root resolver
+// package, one file per root kind plus an object-constructor file:
 //
-// The import path for domain packages is derived from data.Config.Resolver.ImportPath()
-// — the plugin is module-agnostic.
+//   - domain_mutation_resolvers.go     — DomainMutationResolvers,
+//     Mutation() ctor, mutationResolver wrapper.
+//   - domain_query_resolvers.go        — DomainQueryResolvers,
+//     Query() ctor, queryResolver wrapper.
+//   - domain_subscription_resolvers.go — DomainSubscriptionResolvers,
+//     Subscription() ctor, subscriptionResolver wrapper.
+//   - domain_object_resolvers.go       — per-object constructors like
+//     (r *Resolver) Todo() returning &todos.TodoResolver{}, plus
+//     root-package wrappers for non-migrated domains (see rootCtor).
+//
+// Splitting per root kind avoids ambiguous selectors when a field name is
+// reused across Query and Subscription. The import path for domain packages
+// is derived from data.Config.Resolver.ImportPath() — the plugin is
+// module-agnostic.
 func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string]*domainData) error {
 	var ctors []ctor
-	var embeds []embed
-	domainSet := map[string]bool{}
+	var mutationEmbeds, queryEmbeds, subscriptionEmbeds []embed
+	objectDomains := map[string]bool{}
 
 	for domain, d := range domains {
 		prefix := domainStructPrefix(domain)
 
 		if hasRootField(d.fields, "Mutation") {
-			embeds = append(embeds, embed{TypeName: prefix + "Mutation", Domain: domain})
-			domainSet[domain] = true
+			mutationEmbeds = append(mutationEmbeds, embed{TypeName: prefix + "Mutation", Domain: domain})
 		}
 		if hasRootField(d.fields, "Query") {
-			embeds = append(embeds, embed{TypeName: prefix + "Query", Domain: domain})
-			domainSet[domain] = true
+			queryEmbeds = append(queryEmbeds, embed{TypeName: prefix + "Query", Domain: domain})
 		}
 		if hasRootField(d.fields, "Subscription") {
-			embeds = append(embeds, embed{TypeName: prefix + "Subscription", Domain: domain})
-			domainSet[domain] = true
+			subscriptionEmbeds = append(subscriptionEmbeds, embed{TypeName: prefix + "Subscription", Domain: domain})
 		}
 
 		for _, obj := range d.objects {
 			ctors = append(ctors, ctor{TypeName: obj.Name, Domain: domain})
-			domainSet[domain] = true
+			objectDomains[domain] = true
 		}
 	}
 
@@ -270,50 +275,123 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 	hasQuery := data.QueryRoot != nil
 	hasSubscription := data.SubscriptionRoot != nil
 
-	if !hasMutation && !hasQuery && !hasSubscription &&
-		len(ctors) == 0 && len(embeds) == 0 && len(rootCtors) == 0 {
+	resolverDir := data.Config.Resolver.Dir()
+	resolverImport := data.Config.Resolver.ImportPath()
+	generatedPkg := data.Config.Exec.ImportPath()
+
+	kinds := []struct {
+		hasRoot     bool
+		kind        string // "Mutation" / "Query" / "Subscription"
+		structName  string // "DomainMutationResolvers"
+		wrapperName string // "mutationResolver"
+		fileName    string // "domain_mutation_resolvers.go"
+		embeds      []embed
+	}{
+		{hasMutation, "Mutation", "DomainMutationResolvers", "mutationResolver", "domain_mutation_resolvers.go", mutationEmbeds},
+		{hasQuery, "Query", "DomainQueryResolvers", "queryResolver", "domain_query_resolvers.go", queryEmbeds},
+		{hasSubscription, "Subscription", "DomainSubscriptionResolvers", "subscriptionResolver", "domain_subscription_resolvers.go", subscriptionEmbeds},
+	}
+
+	for _, k := range kinds {
+		outFile := filepath.Join(resolverDir, k.fileName)
+
+		if !k.hasRoot {
+			// Root kind absent from the schema — make sure no stale file
+			// from a previous schema lingers.
+			if err := os.Remove(outFile); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove %s: %w", outFile, err)
+			}
+			continue
+		}
+
+		sortEmbeds(k.embeds)
+		domainImports := embedDomainImports(k.embeds, resolverImport)
+
+		build := struct {
+			GeneratedPkg  string
+			DomainImports []string
+			Embeds        []embed
+			StructName    string
+			WrapperName   string
+			Kind          string
+		}{
+			GeneratedPkg:  generatedPkg,
+			DomainImports: domainImports,
+			Embeds:        k.embeds,
+			StructName:    k.structName,
+			WrapperName:   k.wrapperName,
+			Kind:          k.kind,
+		}
+		if err := renderRootKindFile(data, outFile, build); err != nil {
+			return err
+		}
+	}
+
+	// Older plugin versions wrote everything to a single domain_resolvers.go.
+	// If a project upgrades, the stale file would conflict with the new
+	// per-kind files (duplicate declarations). Remove it on every run — cheap,
+	// idempotent, no-op once the migration is done.
+	staleAggregateFile := filepath.Join(resolverDir, "domain_resolvers.go")
+	if err := os.Remove(staleAggregateFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", staleAggregateFile, err)
+	}
+
+	objectFile := filepath.Join(resolverDir, "domain_object_resolvers.go")
+	if len(ctors) == 0 && len(rootCtors) == 0 {
+		if err := os.Remove(objectFile); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", objectFile, err)
+		}
+
 		return nil
 	}
 
 	sort.Slice(ctors, func(i, j int) bool { return ctors[i].TypeName < ctors[j].TypeName })
-	sort.Slice(embeds, func(i, j int) bool {
-		if embeds[i].Domain != embeds[j].Domain {
-			return embeds[i].Domain < embeds[j].Domain
-		}
 
-		return embeds[i].TypeName < embeds[j].TypeName
-	})
-
-	resolverImport := data.Config.Resolver.ImportPath()
-	domainImports := make([]string, 0, len(domainSet))
-	for d := range domainSet {
+	domainImports := make([]string, 0, len(objectDomains))
+	for d := range objectDomains {
 		domainImports = append(domainImports, resolverImport+"/"+d)
 	}
 	sort.Strings(domainImports)
 
-	build := struct {
-		GeneratedPkg    string
-		DomainImports   []string
-		Ctors           []ctor
-		Embeds          []embed
-		RootCtors       []rootCtor
-		HasMutation     bool
-		HasQuery        bool
-		HasSubscription bool
+	objBuild := struct {
+		GeneratedPkg  string
+		DomainImports []string
+		Ctors         []ctor
+		RootCtors     []rootCtor
 	}{
-		GeneratedPkg:    data.Config.Exec.ImportPath(),
-		DomainImports:   domainImports,
-		Ctors:           ctors,
-		Embeds:          embeds,
-		RootCtors:       rootCtors,
-		HasMutation:     hasMutation,
-		HasQuery:        hasQuery,
-		HasSubscription: hasSubscription,
+		GeneratedPkg:  generatedPkg,
+		DomainImports: domainImports,
+		Ctors:         ctors,
+		RootCtors:     rootCtors,
 	}
 
-	outFile := filepath.Join(data.Config.Resolver.Dir(), "domain_resolvers.go")
+	return renderObjectCtorsFile(data, objectFile, objBuild)
+}
 
-	return renderConstructorsFile(data, outFile, build)
+func sortEmbeds(es []embed) {
+	sort.Slice(es, func(i, j int) bool {
+		if es[i].Domain != es[j].Domain {
+			return es[i].Domain < es[j].Domain
+		}
+
+		return es[i].TypeName < es[j].TypeName
+	})
+}
+
+// embedDomainImports returns the sorted, deduplicated set of domain package
+// import paths referenced by the given embeds.
+func embedDomainImports(es []embed, resolverImport string) []string {
+	set := map[string]bool{}
+	for _, e := range es {
+		set[e.Domain] = true
+	}
+	out := make([]string, 0, len(set))
+	for d := range set {
+		out = append(out, resolverImport+"/"+d)
+	}
+	sort.Strings(out)
+
+	return out
 }
 
 // fileGroup holds content for a single .go file in a domain package.

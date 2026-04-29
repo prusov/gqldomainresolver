@@ -13,9 +13,14 @@ Standard gqlgen puts every resolver in one package that imports `graph/generated
 For migrated domains the plugin's `Implement()` returns `""`, so the safety-net
 template emits **no** method declarations for those fields — the corresponding
 `*.resolvers.go` file is empty (header only). Methods reach callers via Go
-method promotion: `Resolver` embeds `DomainResolvers`, which value-embeds each
-per-domain `Mixin<Domain>Mutation/Query/Subscription` struct (all generated in
-`domain_resolvers.go`).
+method promotion: each generated wrapper (`mutationResolver` / `queryResolver`
+/ `subscriptionResolver`) embeds the kind-specific
+`DomainMutationResolvers` / `DomainQueryResolvers` / `DomainSubscriptionResolvers`,
+which value-embeds the matching per-domain
+`Mixin<Domain>Mutation/Query/Subscription` struct (each generated in its own
+`domain_<kind>_resolvers.go` file). Splitting per root kind avoids ambiguous selectors
+when the same field name appears as both a `Query` and a `Subscription`
+(e.g. `userNotifications`).
 
 **Tier 2 — domain packages (`graph/resolver/<domain>/`)**
 
@@ -44,7 +49,8 @@ Names that are Go keywords, contain dashes, or equal `"schema"` are skipped.
 
 The `Mixin` prefix keeps the struct name from starting with the package name
 (otherwise `revive`'s `package-stutters` rule triggers, e.g. `todos.TodosMutation`).
-Methods reach the root `Resolver` via Go method promotion through `DomainResolvers`.
+Methods reach each root wrapper via Go method promotion through the
+kind-specific `Domain{Mutation,Query,Subscription}Resolvers` struct.
 
 Root-package fields **without** a domain (e.g. `Query.hello` defined in the root
 `schema.graphqls`) keep their classic resolver method on the root package and
@@ -107,7 +113,7 @@ resolver:
   resolver_template: plugin/domainresolver/templates/resolver.gotpl
 ```
 
-This template skips method declarations for root fields that have a domain package (the plugin returns `""` from `Implement()`). Those methods reach callers via Go method promotion through the generated `DomainResolvers` struct.
+This template skips method declarations for root fields that have a domain package (the plugin returns `""` from `Implement()`). Those methods reach callers via Go method promotion through the generated `Domain{Mutation,Query,Subscription}Resolvers` structs.
 
 ### 4. Create the Resolver struct
 
@@ -117,11 +123,22 @@ The plugin does not generate `graph/resolver/resolver.go`. Create it once:
 package resolver
 
 type Resolver struct {
-    DomainResolvers
+    DomainMutationResolvers
+    DomainQueryResolvers
+    DomainSubscriptionResolvers
 }
 ```
 
-Everything else (`DomainResolvers`, per-domain Mutation/Query structs, object constructors) is generated into `graph/resolver/domain_resolvers.go` on each `go run ./cmd/gqlgen` run.
+Embed only the kinds that actually exist in your schema — if your schema has no `Subscription` root, drop `DomainSubscriptionResolvers` (the file that defines it isn't generated).
+
+Everything else is generated on each `go run ./cmd/gqlgen` run, split per root kind:
+
+| File | Contents |
+|---|---|
+| `graph/resolver/domain_mutation_resolvers.go` | `DomainMutationResolvers`, `Mutation()` ctor, `mutationResolver` wrapper |
+| `graph/resolver/domain_query_resolvers.go` | `DomainQueryResolvers`, `Query()` ctor, `queryResolver` wrapper |
+| `graph/resolver/domain_subscription_resolvers.go` | `DomainSubscriptionResolvers`, `Subscription()` ctor, `subscriptionResolver` wrapper |
+| `graph/resolver/domain_object_resolvers.go` | per-object constructors (`(r *Resolver) Todo()` etc.) + root-package wrappers for non-migrated domains |
 
 ## Incremental migration with `WithEnabledDomains`
 
@@ -184,7 +201,7 @@ impractical.
      `mutationResolver` / `<type>Resolver`. Code that accessed `r.Resolver`
      fields (DI handles, loggers, etc.) won't compile until you re-thread
      those dependencies — typically via fields on the domain struct that
-     `domain_resolvers.go` instantiates.
+     `domain_object_resolvers.go` instantiates.
    - **Run the full test suite.** Compilation passing isn't enough — domain
      packages don't import `graph/generated`, so a missing wiring shows up
      only at runtime when the GraphQL handler dispatches a query.
@@ -238,8 +255,11 @@ After `go run ./cmd/gqlgen` you get:
 
 ```
 graph/resolver/
-  resolver.go               ← you write this once: type Resolver struct{ DomainResolvers }
-  domain_resolvers.go       ← generated: DomainResolvers, mutationResolver/queryResolver, per-object constructors
+  resolver.go                         ← you write this once: type Resolver struct{ DomainMutationResolvers; DomainQueryResolvers; DomainSubscriptionResolvers }
+  domain_mutation_resolvers.go        ← generated: DomainMutationResolvers, mutationResolver, Mutation() ctor
+  domain_query_resolvers.go           ← generated: DomainQueryResolvers, queryResolver, Query() ctor
+  domain_subscription_resolvers.go    ← generated: DomainSubscriptionResolvers, subscriptionResolver, Subscription() ctor
+  domain_object_resolvers.go          ← generated: per-object constructors + non-migrated wrapper types
   schema.resolvers.go       ← generated: methods for root fields without a domain (e.g. Query.hello)
   todos/
     todo.go                 ← generated: MixinTodosMutation, MixinTodosQuery, TodoResolver methods
@@ -247,7 +267,7 @@ graph/resolver/
     task.go                 ← generated: MixinTasksMutation, MixinTasksQuery, ...
 ```
 
-The import path used in `domain_resolvers.go` is derived automatically from `resolver.dir` / `resolver.package` in `gqlgen.yml` — the plugin is module-agnostic.
+The import paths used in the generated `domain_*_resolvers.go` files are derived automatically from `resolver.dir` / `resolver.package` in `gqlgen.yml` — the plugin is module-agnostic.
 
 ## Limitations
 

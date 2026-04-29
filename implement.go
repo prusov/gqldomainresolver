@@ -11,8 +11,10 @@ import (
 //
 // Returning "" signals the safety-net template (graph/templates/resolver.gotpl)
 // to skip emitting a method declaration entirely. We rely on Go method promotion:
-// Resolver embeds DomainResolvers which embeds per-domain Mutation/Query structs,
-// whose methods are promoted up through mutationResolver{*Resolver}.
+// each wrapper (mutationResolver / queryResolver / subscriptionResolver) embeds
+// the kind-specific DomainMutationResolvers / DomainQueryResolvers /
+// DomainSubscriptionResolvers, which embed the per-domain Mixin*Mutation/Query/
+// Subscription structs, whose methods are promoted up through the wrapper.
 //
 // Behavior, in evaluation order:
 //   - field whose domain is enabled → "" (template skips; method lives in the
