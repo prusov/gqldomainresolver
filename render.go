@@ -445,6 +445,7 @@ const domainTemplate = `
 {{ range $m := .Methods }}
 {{- if $m.Object.Root -}}
 {{- if eq $m.Object.Name "Mutation" }}
+// {{ $m.Field.GoFieldName }} is the resolver for the {{ $m.Field.Name }} field.
 func (m *{{ $.MutationStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
 	{{ $m.Implementation }}
@@ -453,6 +454,7 @@ func (m *{{ $.MutationStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.Short
 	{{- end }}
 }
 {{- else if eq $m.Object.Name "Query" }}
+// {{ $m.Field.GoFieldName }} is the resolver for the {{ $m.Field.Name }} field.
 func (q *{{ $.QueryStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
 	{{ $m.Implementation }}
@@ -461,6 +463,7 @@ func (q *{{ $.QueryStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortRes
 	{{- end }}
 }
 {{- else if eq $m.Object.Name "Subscription" }}
+// {{ $m.Field.GoFieldName }} is the resolver for the {{ $m.Field.Name }} field.
 func (s *{{ $.SubscriptionStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
 	{{ $m.Implementation }}
@@ -470,6 +473,7 @@ func (s *{{ $.SubscriptionStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.S
 }
 {{- end }}
 {{- else }}
+// {{ $m.Field.GoFieldName }} is the resolver for the {{ $m.Field.Name }} field.
 func (r *{{ ucFirst $m.Object.Name }}Resolver) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
 	{{ $m.Implementation }}
