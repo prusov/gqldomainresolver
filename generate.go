@@ -162,24 +162,15 @@ func schemaBase(schemaPath string) string {
 	return strings.TrimSuffix(filepath.Base(filepath.ToSlash(schemaPath)), ".graphqls")
 }
 
-// buildDomainFile classifies the fields in a fileGroup into the categories
-// that domainTemplate consumes (mutation/query/subscription methods, object
-// methods, and non-root object structs).
+// buildDomainFile collects the fields in a fileGroup into a single Methods
+// list. The append order mirrors what gqlgen's resolvergen would produce:
+// alphabetical by parent object name (data.Objects is alpha-sorted upstream),
+// then schema-declaration order of fields.
 func buildDomainFile(fg *fileGroup) *domainFileBuild {
 	build := &domainFileBuild{Objects: fg.objects}
 
 	for _, df := range fg.fields {
-		m := &domainMethodBuild{Object: df.Object, Field: df.Field}
-		switch {
-		case df.Object.Root && df.Object.Name == "Mutation":
-			build.MutationMethods = append(build.MutationMethods, m)
-		case df.Object.Root && df.Object.Name == "Query":
-			build.QueryMethods = append(build.QueryMethods, m)
-		case df.Object.Root && df.Object.Name == "Subscription":
-			build.SubscriptionMethods = append(build.SubscriptionMethods, m)
-		case !df.Object.Root:
-			build.ObjectMethods = append(build.ObjectMethods, m)
-		}
+		build.Methods = append(build.Methods, &domainMethodBuild{Object: df.Object, Field: df.Field})
 	}
 
 	return build

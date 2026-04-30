@@ -189,20 +189,27 @@ type domainMethodBuild struct {
 }
 
 type domainFileBuild struct {
-	// Root-method emission.
-	MutationStructName     string               // e.g., "TodosMutation". Empty when no mutation methods in this file.
-	QueryStructName        string               // e.g., "TodosQuery". Empty when no query methods in this file.
-	SubscriptionStructName string               // e.g., "TodosSubscription". Empty when no subscription methods in this file.
-	MutationMethods        []*domainMethodBuild // methods on MutationStructName
-	QueryMethods           []*domainMethodBuild // methods on QueryStructName
-	SubscriptionMethods    []*domainMethodBuild // methods on SubscriptionStructName
-	EmitMutationStruct     bool                 // declare `type <MutationStructName> struct{}` in this file
-	EmitQueryStruct        bool                 // declare `type <QueryStructName> struct{}` in this file
-	EmitSubscriptionStruct bool                 // declare `type <SubscriptionStructName> struct{}` in this file
+	// Receiver type names referenced by methods in this file. Empty when the
+	// file has no methods of that kind.
+	MutationStructName     string
+	QueryStructName        string
+	SubscriptionStructName string
 
-	// Per-object (non-root) resolver emission — unchanged behavior.
-	ObjectMethods []*domainMethodBuild
-	Objects       []*codegen.Object
+	// Methods are emitted in append order. The order mirrors what the original
+	// gqlgen resolvergen would produce for a single .resolvers.go file:
+	// alphabetical by parent object name (data.Objects is alpha-sorted), then
+	// schema-declaration order of fields.
+	Methods []*domainMethodBuild
+
+	// EmitMutationStruct/EmitQueryStruct/EmitSubscriptionStruct gate the
+	// `type Mixin<Domain><Kind> struct{}` declaration so each is emitted
+	// exactly once across the domain package.
+	EmitMutationStruct     bool
+	EmitQueryStruct        bool
+	EmitSubscriptionStruct bool
+
+	// Non-root object struct declarations (e.g. `type TodoResolver struct{}`).
+	Objects []*codegen.Object
 
 	RemainingSource string // unknown functions from the previous file version; emitted as a commented-out warning block
 
@@ -241,10 +248,26 @@ func domainStructPrefix(domain string) string {
 	return "Mixin" + strings.ToUpper(domain[:1]) + domain[1:]
 }
 
+// receiverFor returns the receiver type name used for the given method.
+// Root methods land on the kind-specific Mixin struct; non-root methods land
+// on <Type>Resolver.
+func receiverFor(m *domainMethodBuild, mutationType, queryType, subscriptionType string) string {
+	if m.Object.Root {
+		switch m.Object.Name {
+		case "Mutation":
+			return mutationType
+		case "Query":
+			return queryType
+		case "Subscription":
+			return subscriptionType
+		}
+	}
+
+	return m.Object.Name + "Resolver"
+}
+
 // restoreImpls fills in the Implementation field of each method by reading
-// the previous body from disk via the AST rewriter. receiverType returns the
-// receiver type name to look up for a given method (the same name for all
-// root methods, per-object for ObjectMethods).
+// the previous body from disk via the AST rewriter.
 //
 // If the AST rewriter is nil (first generation of the domain package) or the
 // receiver isn't found in the domain dir (first-time migration — body still
@@ -276,19 +299,22 @@ func renderDomainFile(
 	queryType := prefix + "Query"
 	subscriptionType := prefix + "Subscription"
 
-	restoreImpls(build.MutationMethods, rw, migrated, func(*domainMethodBuild) string { return mutationType })
-	restoreImpls(build.QueryMethods, rw, migrated, func(*domainMethodBuild) string { return queryType })
-	restoreImpls(build.SubscriptionMethods, rw, migrated, func(*domainMethodBuild) string { return subscriptionType })
-	restoreImpls(build.ObjectMethods, rw, migrated, func(m *domainMethodBuild) string { return m.Object.Name + "Resolver" })
+	restoreImpls(build.Methods, rw, migrated, func(m *domainMethodBuild) string {
+		return receiverFor(m, mutationType, queryType, subscriptionType)
+	})
 
-	if len(build.MutationMethods) > 0 {
-		build.MutationStructName = mutationType
-	}
-	if len(build.QueryMethods) > 0 {
-		build.QueryStructName = queryType
-	}
-	if len(build.SubscriptionMethods) > 0 {
-		build.SubscriptionStructName = subscriptionType
+	for _, m := range build.Methods {
+		if !m.Object.Root {
+			continue
+		}
+		switch m.Object.Name {
+		case "Mutation":
+			build.MutationStructName = mutationType
+		case "Query":
+			build.QueryStructName = queryType
+		case "Subscription":
+			build.SubscriptionStructName = subscriptionType
+		}
 	}
 
 	if rw != nil {
@@ -416,6 +442,44 @@ const domainTemplate = `
 
 {{ .Imports }}
 
+{{ range $m := .Methods }}
+{{- if $m.Object.Root -}}
+{{- if eq $m.Object.Name "Mutation" }}
+func (m *{{ $.MutationStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
+	{{- if $m.Implementation }}
+	{{ $m.Implementation }}
+	{{- else }}
+	panic(fmt.Errorf("not implemented: Mutation.{{ $m.Field.GoFieldName }}"))
+	{{- end }}
+}
+{{- else if eq $m.Object.Name "Query" }}
+func (q *{{ $.QueryStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
+	{{- if $m.Implementation }}
+	{{ $m.Implementation }}
+	{{- else }}
+	panic(fmt.Errorf("not implemented: Query.{{ $m.Field.GoFieldName }}"))
+	{{- end }}
+}
+{{- else if eq $m.Object.Name "Subscription" }}
+func (s *{{ $.SubscriptionStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
+	{{- if $m.Implementation }}
+	{{ $m.Implementation }}
+	{{- else }}
+	panic(fmt.Errorf("not implemented: Subscription.{{ $m.Field.GoFieldName }}"))
+	{{- end }}
+}
+{{- end }}
+{{- else }}
+func (r *{{ ucFirst $m.Object.Name }}Resolver) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
+	{{- if $m.Implementation }}
+	{{ $m.Implementation }}
+	{{- else }}
+	panic(fmt.Errorf("not implemented: {{ $m.Object.Name }}.{{ $m.Field.GoFieldName }}"))
+	{{- end }}
+}
+{{- end }}
+{{ end }}
+
 {{ if .EmitMutationStruct }}
 type {{ .MutationStructName }} struct{}
 {{ end }}
@@ -426,46 +490,6 @@ type {{ .QueryStructName }} struct{}
 
 {{ if .EmitSubscriptionStruct }}
 type {{ .SubscriptionStructName }} struct{}
-{{ end }}
-
-{{ range $m := .MutationMethods }}
-func (m *{{ $.MutationStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
-	{{- if $m.Implementation }}
-	{{ $m.Implementation }}
-	{{- else }}
-	panic(fmt.Errorf("not implemented: Mutation.{{ $m.Field.GoFieldName }}"))
-	{{- end }}
-}
-{{ end }}
-
-{{ range $m := .QueryMethods }}
-func (q *{{ $.QueryStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
-	{{- if $m.Implementation }}
-	{{ $m.Implementation }}
-	{{- else }}
-	panic(fmt.Errorf("not implemented: Query.{{ $m.Field.GoFieldName }}"))
-	{{- end }}
-}
-{{ end }}
-
-{{ range $m := .SubscriptionMethods }}
-func (s *{{ $.SubscriptionStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
-	{{- if $m.Implementation }}
-	{{ $m.Implementation }}
-	{{- else }}
-	panic(fmt.Errorf("not implemented: Subscription.{{ $m.Field.GoFieldName }}"))
-	{{- end }}
-}
-{{ end }}
-
-{{ range $m := .ObjectMethods }}
-func (r *{{ ucFirst $m.Object.Name }}Resolver) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
-	{{- if $m.Implementation }}
-	{{ $m.Implementation }}
-	{{- else }}
-	panic(fmt.Errorf("not implemented: {{ $m.Object.Name }}.{{ $m.Field.GoFieldName }}"))
-	{{- end }}
-}
 {{ end }}
 
 {{ range $obj := .Objects }}

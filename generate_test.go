@@ -283,17 +283,23 @@ func TestBuildDomainFile(t *testing.T) {
 
 	build := buildDomainFile(fg)
 
-	if len(build.MutationMethods) != 1 || build.MutationMethods[0].Field.GoFieldName != "CreateTodo" {
-		t.Errorf("MutationMethods = %v", build.MutationMethods)
+	wantOrder := []struct {
+		Object string
+		Field  string
+	}{
+		{"Mutation", "CreateTodo"},
+		{"Query", "Todos"},
+		{"Subscription", "TodoChanged"},
+		{"Todo", "User"},
 	}
-	if len(build.QueryMethods) != 1 || build.QueryMethods[0].Field.GoFieldName != "Todos" {
-		t.Errorf("QueryMethods = %v", build.QueryMethods)
+	if len(build.Methods) != len(wantOrder) {
+		t.Fatalf("Methods len = %d, want %d", len(build.Methods), len(wantOrder))
 	}
-	if len(build.SubscriptionMethods) != 1 || build.SubscriptionMethods[0].Field.GoFieldName != "TodoChanged" {
-		t.Errorf("SubscriptionMethods = %v", build.SubscriptionMethods)
-	}
-	if len(build.ObjectMethods) != 1 || build.ObjectMethods[0].Field.GoFieldName != "User" {
-		t.Errorf("ObjectMethods = %v", build.ObjectMethods)
+	for i, w := range wantOrder {
+		got := build.Methods[i]
+		if got.Object.Name != w.Object || got.Field.GoFieldName != w.Field {
+			t.Errorf("Methods[%d] = %s.%s, want %s.%s", i, got.Object.Name, got.Field.GoFieldName, w.Object, w.Field)
+		}
 	}
 	if len(build.Objects) != 1 || build.Objects[0].Name != "Todo" {
 		t.Errorf("Objects = %v", build.Objects)
