@@ -14,37 +14,89 @@ var goKeywords = map[string]bool{
 	"select": true, "struct": true, "switch": true, "type": true, "var": true,
 }
 
-// extractDomain returns the domain name from a .graphqls file path,
-// or an empty string for root-level schema files.
+// Domain represents a schema domain extracted from a .graphqls file path.
 //
-// Examples:
+// Raw is the schema directory name as it appears on disk (e.g.
+// "business-process"). It is used to identify the source for the allowlist
+// and for diagnostics.
 //
-//	/abs/path/graph/schema/todos/todo.graphqls        → "todos"
-//	/abs/path/graph/schema/schema.graphqls            → "" (root)
-//	/abs/path/graph/schema/common/directives.graphqls → "common"
-//	/abs/path/graph/schema/business-process/x.graphqls → "" (dash invalid)
-//	/abs/path/graph/schema/import/x.graphqls          → "" (reserved word)
-func extractDomain(schemaPath string) string {
-	parts := strings.Split(filepath.ToSlash(schemaPath), "/")
-	if len(parts) < 2 {
-		return ""
-	}
-	parent := parts[len(parts)-2]
-	if !isValidDomain(parent) {
-		return ""
-	}
-
-	return parent
+// Pkg is the normalized form (e.g. "businessprocess") used everywhere on the
+// Go side: output package directory, package name, import path leaf and
+// struct prefix.
+//
+// An empty Pkg means "skip" — the field falls back to the safety-net resolver
+// in the root package.
+type Domain struct {
+	Raw string
+	Pkg string
 }
 
-func isValidDomain(name string) bool {
-	if name == "" || name == "schema" {
-		return false
+// IsZero reports whether the domain is the empty/skip value.
+func (d Domain) IsZero() bool { return d.Pkg == "" }
+
+// extractDomain returns the domain of a .graphqls file path,
+// or the zero Domain for root-level schema files.
+//
+// Examples (default keyword prefix "gql"):
+//
+//	/abs/path/graph/schema/todos/todo.graphqls           → {Raw:"todos", Pkg:"todos"}
+//	/abs/path/graph/schema/schema.graphqls               → {} (root)
+//	/abs/path/graph/schema/common/directives.graphqls    → {Raw:"common", Pkg:"common"}
+//	/abs/path/graph/schema/business-process/x.graphqls   → {Raw:"business-process", Pkg:"businessprocess"}
+//	/abs/path/graph/schema/order_flow/x.graphqls         → {Raw:"order_flow", Pkg:"orderflow"}
+//	/abs/path/graph/schema/import/x.graphqls             → {Raw:"import", Pkg:"gqlimport"}
+//	/abs/path/graph/schema/2fa/x.graphqls                → {Raw:"2fa", Pkg:"gql2fa"}
+func extractDomain(schemaPath, keywordPrefix string) Domain {
+	parts := strings.Split(filepath.ToSlash(schemaPath), "/")
+	if len(parts) < 2 {
+		return Domain{}
 	}
-	// Dash makes the name an invalid Go identifier.
-	if strings.Contains(name, "-") {
-		return false
+	parent := parts[len(parts)-2]
+	// "schema" is reserved as the "root, no domain" marker — a literal directory
+	// of that name still maps to the root convention rather than being normalized.
+	if parent == "" || parent == "schema" {
+		return Domain{}
+	}
+	pkg := normalizeDomain(parent, keywordPrefix)
+	if pkg == "" {
+		return Domain{}
 	}
 
-	return !goKeywords[name]
+	return Domain{Raw: parent, Pkg: pkg}
+}
+
+// normalizeDomain converts a schema directory name into a valid Go package
+// identifier using the strip-only lowercase rule:
+//
+//  1. lowercase the whole string;
+//  2. strip dashes and underscores entirely (no separators in the result);
+//  3. if the result is a Go keyword, equals "schema", or starts with a digit,
+//     prepend keywordPrefix;
+//  4. if the result is empty (e.g. dir was "-" or "_"), return "".
+//
+// The keywordPrefix is itself assumed to be a valid identifier prefix (the
+// plugin validates this in New()).
+func normalizeDomain(name, keywordPrefix string) string {
+	lower := strings.ToLower(name)
+	stripped := strings.ReplaceAll(strings.ReplaceAll(lower, "-", ""), "_", "")
+	if stripped == "" {
+		return ""
+	}
+	if needsKeywordPrefix(stripped) {
+		return keywordPrefix + stripped
+	}
+
+	return stripped
+}
+
+func needsKeywordPrefix(s string) bool {
+	if s == "" {
+		return false
+	}
+	if goKeywords[s] || s == "schema" {
+		return true
+	}
+	c := s[0]
+
+	return c >= '0' && c <= '9'
 }

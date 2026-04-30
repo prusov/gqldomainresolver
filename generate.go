@@ -18,7 +18,11 @@ type domainField struct {
 }
 
 // domainData holds collected fields and non-root objects for a single domain.
+// raw remembers the schema-directory name as it appears on disk; it is used
+// for diagnostics (e.g. collision errors) but never for path/identifier
+// generation — that uses the map key (the normalized Pkg).
 type domainData struct {
+	raw     string
 	fields  []*domainField
 	objects []*codegen.Object
 }
@@ -51,14 +55,22 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			// Group by the field's schema file, not the object's — needed for
 			// root types (Mutation/Query) whose fields span multiple schema files.
 			domain := p.domainFor(f.Position.Src.Name)
-			if domain == "" {
+			if domain.IsZero() {
 				continue
 			}
 			migratedBases[schemaBase(f.Position.Src.Name)] = true
-			if domains[domain] == nil {
-				domains[domain] = &domainData{}
+			existing, ok := domains[domain.Pkg]
+			if !ok {
+				domains[domain.Pkg] = &domainData{raw: domain.Raw}
+				existing = domains[domain.Pkg]
+			} else if existing.raw != domain.Raw {
+				// Two different schema-dir names normalized to the same Go
+				// package identifier. Bail out loudly — silently merging them
+				// would collapse user-meaningful directories into one package.
+				return fmt.Errorf("domainresolver: schema directories %q and %q both normalize to package %q — rename one or change the keyword prefix",
+					existing.raw, domain.Raw, domain.Pkg)
 			}
-			d := domains[domain]
+			d := existing
 			d.fields = append(d.fields, &domainField{Object: obj, Field: f})
 
 			// Only non-root types need a generated struct (e.g. TodoResolver).
@@ -77,8 +89,8 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 		}
 	}
 
-	for domain, d := range domains {
-		domainDir := filepath.Join(resolverDir, domain)
+	for pkg, d := range domains {
+		domainDir := filepath.Join(resolverDir, pkg)
 		if err := os.MkdirAll(domainDir, 0755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", domainDir, err)
 		}
@@ -121,7 +133,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			build.EmitQueryStruct = base == queryOwner
 			build.EmitSubscriptionStruct = base == subscriptionOwner
 
-			if err := renderDomainFile(data, domain, outFile, build, rw, p.migratedImpls); err != nil {
+			if err := renderDomainFile(data, pkg, d.raw, outFile, build, rw, p.migratedImpls); err != nil {
 				return fmt.Errorf("render %s: %w", outFile, err)
 			}
 
@@ -208,7 +220,7 @@ func (p *Plugin) collectRootCtors(objects []*codegen.Object) []rootCtor {
 		if obj.Root || !obj.HasResolvers() {
 			continue
 		}
-		if p.domainFor(obj.Position.Src.Name) != "" {
+		if !p.domainFor(obj.Position.Src.Name).IsZero() {
 			continue
 		}
 		out = append(out, rootCtor{
@@ -243,22 +255,22 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 	var mutationEmbeds, queryEmbeds, subscriptionEmbeds []embed
 	objectDomains := map[string]bool{}
 
-	for domain, d := range domains {
-		prefix := domainStructPrefix(domain)
+	for pkg, d := range domains {
+		prefix := domainStructPrefix(d.raw)
 
 		if hasRootField(d.fields, "Mutation") {
-			mutationEmbeds = append(mutationEmbeds, embed{TypeName: prefix + "Mutation", Domain: domain})
+			mutationEmbeds = append(mutationEmbeds, embed{TypeName: prefix + "Mutation", Domain: pkg})
 		}
 		if hasRootField(d.fields, "Query") {
-			queryEmbeds = append(queryEmbeds, embed{TypeName: prefix + "Query", Domain: domain})
+			queryEmbeds = append(queryEmbeds, embed{TypeName: prefix + "Query", Domain: pkg})
 		}
 		if hasRootField(d.fields, "Subscription") {
-			subscriptionEmbeds = append(subscriptionEmbeds, embed{TypeName: prefix + "Subscription", Domain: domain})
+			subscriptionEmbeds = append(subscriptionEmbeds, embed{TypeName: prefix + "Subscription", Domain: pkg})
 		}
 
 		for _, obj := range d.objects {
-			ctors = append(ctors, ctor{TypeName: obj.Name, Domain: domain})
-			objectDomains[domain] = true
+			ctors = append(ctors, ctor{TypeName: obj.Name, Domain: pkg})
+			objectDomains[pkg] = true
 		}
 	}
 

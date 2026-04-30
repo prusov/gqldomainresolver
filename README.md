@@ -36,7 +36,49 @@ Domain = name of the subdirectory containing the schema file:
 | `graph/schema/schema.graphqls` | *(none — root, gets panic stubs)* |
 | `graph/schema/common/directives.graphqls` | `common` *(no resolver fields → no package generated)* |
 
-Names that are Go keywords, contain dashes, or equal `"schema"` are skipped.
+The directory name is split into two views:
+
+- **`Domain.Raw`** — the directory name as it appears on disk
+  (`"business-process"`). It is what you pass to `WithEnabledDomains`.
+- **`Domain.Pkg`** — the normalized form (`"businessprocess"`). It is the
+  on-disk package directory, the Go package name and the leaf segment of
+  the import path.
+
+The `Mixin` struct prefix is built from `Raw` and treats `-` / `_` as word
+boundaries (e.g. `business-process` → `MixinBusinessProcess`,
+`order_flow` → `MixinOrderFlow`) so the receiver name reads naturally even
+though the package itself is `businessprocess` / `orderflow`.
+
+### Normalization (strip-only lowercase)
+
+1. Lowercase the whole string.
+2. Strip every dash and underscore.
+3. If the result is a Go keyword, equals `"schema"`, or starts with a digit,
+   prepend the keyword prefix (default `"gql"`, configurable via
+   `WithKeywordPrefix`).
+4. If the result is empty (e.g. dir was `"-"` or `"_"`), the field is
+   skipped — no domain package is generated.
+
+| Schema dir          | Package          |
+|---------------------|------------------|
+| `todos`             | `todos`          |
+| `business-process`  | `businessprocess`|
+| `order_flow`        | `orderflow`      |
+| `OrderFlow`         | `orderflow`      |
+| `import`            | `gqlimport`      |
+| `type`              | `gqltype`        |
+| `2fa`               | `gql2fa`         |
+
+A literal directory called `schema` is reserved for the root convention
+(`graph/schema/schema.graphqls` and friends) — fields under it stay in the
+root resolver package.
+
+### Collision detection
+
+If two different raw directory names normalize to the same package
+(e.g. `order-flow` and `order_flow` → `orderflow`), `GenerateCode` returns
+an error pointing at both directories. Resolve by renaming one or by
+choosing a keyword prefix that disambiguates them.
 
 ## Generated code conventions
 
@@ -219,12 +261,13 @@ impractical.
 |---|---|
 | Empty / `nil` | Plugin is a no-op for **every** schema file. |
 | `["todos"]` | Only `todos` is migrated; all other domains use root-package resolvers. |
-| `["schema"]`, `["with-dash"]`, `["import"]` | Silently ignored (fail `isValidDomain`). Logged at WARN. |
+| `["business-process"]`, `["import"]`, `["2fa"]` | Migrated — names are normalized for the Go side (`businessprocess`, `gqlimport`, `gql2fa`), but the allowlist key stays the raw on-disk name. |
 | `["nonexistent"]` | Silently tolerated — useful for adding a name before its schema files land. |
 | `["todos", "todos"]` | Deduplicated to `["todos"]`. |
 
-Names are compared as-is after the same `isValidDomain` check used for schema
-directory parsing — they're case-sensitive and must be valid Go identifiers.
+Names are matched **case-sensitively against the raw schema-dir name**.
+Pass what you wrote on disk (e.g. `"business-process"`), not the normalized
+package name (`"businessprocess"`).
 
 ## Schema layout
 
@@ -271,14 +314,16 @@ The import paths used in the generated `*.resolvers.go` files are derived automa
 
 ## Limitations
 
-- **Domain name = parent directory name** of the schema file. It must be a valid Go identifier: no dashes, not a Go keyword, not `schema`. Invalid names are silently skipped (the field falls back to a panic stub in the root package).
+- **Domain name = parent directory name** of the schema file. The name is normalized (strip-only lowercase) into a Go package identifier, so dashes, underscores, mixed case, Go keywords and leading digits are all supported. Two different directory names that normalize to the same package fail at codegen time with a clear collision error. The literal name `schema` remains reserved for the root convention.
 - A given resolver field belongs to exactly one domain — the one of its `.graphqls` file. Splitting one root field across multiple domain packages isn't supported.
 - The `resolver_template` in `gqlgen.yml` must be `plugin/domainresolver/templates/resolver.gotpl` (or a compatible template that skips method emission when `Implement()` returns `""`). Using gqlgen's default template will cause duplicate method declarations on the root resolver.
 - Only one plugin per gqlgen run can implement `ResolverImplementer` — don't combine with another plugin that hooks the same interface.
 
 ## Troubleshooting
 
-**Compiled but the resolver isn't being called.** Check that the schema file lives in a directory whose name is a valid Go identifier (`graph/schema/business-process/x.graphqls` → invalid because of the dash; the field becomes a panic stub in the root package). Either rename the directory or implement the field manually.
+**Compiled but the resolver isn't being called.** Check that the directory name is in your `WithEnabledDomains` list — the allowlist takes the *raw* on-disk name (e.g. `"business-process"`), not the normalized package name (`"businessprocess"`).
+
+**`GenerateCode` failed with a collision error.** Two enabled directories normalize to the same package (e.g. `order-flow` and `order_flow` both become `orderflow`). Rename one of them, or pass `WithKeywordPrefix` to a value that disambiguates the conflict.
 
 **Old code reappeared after I renamed a method.** Look for the `// !!! WARNING !!!` block near the bottom of the affected domain file — gqlgen preserves orphaned function bodies there so you don't lose work. Move what you still need elsewhere, then delete the block.
 

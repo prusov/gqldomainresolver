@@ -237,15 +237,39 @@ func (b *domainFileBuild) Imports() string {
 	return ""
 }
 
-// domainStructPrefix turns "todos" → "MixinTodos", used to derive the struct
-// names MixinTodosMutation / MixinTodosQuery exposed by the domain package.
+// domainStructPrefix turns the raw schema-directory name into the receiver
+// struct prefix used by the domain package — e.g.
+//
+//	"todos"            → "MixinTodos"
+//	"business-process" → "MixinBusinessProcess"
+//	"order_flow"       → "MixinOrderFlow"
+//
+// The split honours dashes and underscores as word boundaries so the
+// generated struct name reads naturally even when the package name itself
+// is the strip-only lowercase form (`businessprocess`, `orderflow`).
+//
 // The "Mixin" lead-in keeps the struct name from starting with the package
-// name (which would trigger revive's package-stutter rule, e.g. todos.TodosMutation).
-func domainStructPrefix(domain string) string {
-	if domain == "" {
+// name (which would trigger revive's package-stutter rule, e.g.
+// todos.TodosMutation).
+func domainStructPrefix(rawDomain string) string {
+	if rawDomain == "" {
 		return ""
 	}
-	return "Mixin" + strings.ToUpper(domain[:1]) + domain[1:]
+	parts := strings.FieldsFunc(rawDomain, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+	var b strings.Builder
+	b.WriteString("Mixin")
+	for _, p := range parts {
+		p = strings.ToLower(p)
+		if p == "" {
+			continue
+		}
+		b.WriteString(strings.ToUpper(p[:1]))
+		b.WriteString(p[1:])
+	}
+
+	return b.String()
 }
 
 // receiverFor returns the receiver type name used for the given method.
@@ -288,13 +312,14 @@ func restoreImpls(methods []*domainMethodBuild, rw *astRewriter, migrated map[st
 
 func renderDomainFile(
 	data *codegen.Data,
-	pkgName string,
+	pkgName string, // normalized Go package name (Domain.Pkg)
+	rawDomain string, // raw schema-dir name — drives the Mixin prefix
 	outFile string,
 	build *domainFileBuild,
 	rw *astRewriter, // nil if package is being created for the first time
 	migrated map[string]string, // captured prevImpls from Implement() — nil-safe
 ) error {
-	prefix := domainStructPrefix(pkgName)
+	prefix := domainStructPrefix(rawDomain)
 	mutationType := prefix + "Mutation"
 	queryType := prefix + "Query"
 	subscriptionType := prefix + "Subscription"
