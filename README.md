@@ -88,11 +88,27 @@ choosing a keyword prefix that disambiguates them.
 | `Query.todos` | method `(q *MixinTodosQuery) Todos(ctx)` |
 | `Subscription.todoChanged` | method `(s *MixinTodosSubscription) TodoChanged(ctx)` |
 | field resolver on `Todo.user` | method `(r *TodoResolver) User(ctx, obj)` |
+| field resolver on `CatalogCategory.parent` (in `catalog/`) | method `(r *CategoryResolver) Parent(ctx, obj)` |
 
-The `Mixin` prefix keeps the struct name from starting with the package name
-(otherwise `revive`'s `package-stutters` rule triggers, e.g. `todos.TodosMutation`).
-Methods reach each root wrapper via Go method promotion through the
-kind-specific `Domain{Mutation,Query,Subscription}Resolvers` struct.
+The `Mixin` prefix on root structs keeps the struct name from starting with
+the package name (otherwise `revive`'s `package-stutters` rule triggers,
+e.g. `todos.TodosMutation`). Methods reach each root wrapper via Go method
+promotion through the kind-specific
+`Domain{Mutation,Query,Subscription}Resolvers` struct.
+
+Object resolver structs strip the PascalCase form of the domain directory
+name from the front of the GQL type name (when the type name starts with it
+and the remainder begins with an uppercase letter). The remainder + `Resolver`
+becomes the struct name. This avoids stutter at the call site —
+`catalog.CategoryResolver{}` instead of `catalog.CatalogCategoryResolver{}`.
+
+| Domain (`Raw`) | GQL type | Generated struct |
+|---|---|---|
+| `catalog` | `CatalogCategory` | `CategoryResolver` |
+| `import` | `ImportStatus` | `StatusResolver` |
+| `import` | `Entity` | `EntityResolver` *(no prefix match)* |
+| `tasks` | `Task` | `TaskResolver` *(`Task` does not start with `Tasks`)* |
+| `catalog` | `Catalog` *(equals prefix)* | `Resolver` |
 
 Root-package fields **without** a domain (e.g. `Query.hello` defined in the root
 `schema.graphqls`) keep their classic resolver method on the root package and
@@ -308,6 +324,8 @@ graph/resolver/
     todo.resolvers.go       ← generated: MixinTodosMutation, MixinTodosQuery, TodoResolver methods
   tasks/
     task.resolvers.go       ← generated: MixinTasksMutation, MixinTasksQuery, ...
+  catalog/
+    catalog-category.resolvers.go ← generated: MixinCatalogQuery, CategoryResolver (stripped)
 ```
 
 The import paths used in the generated `*.resolvers.go` files are derived automatically from `resolver.dir` / `resolver.package` in `gqlgen.yml` — the plugin is module-agnostic.

@@ -281,7 +281,7 @@ func TestBuildDomainFile(t *testing.T) {
 		objects: []*codegen.Object{todoObj},
 	}
 
-	build := buildDomainFile(fg)
+	build := buildDomainFile(fg, "todos")
 
 	wantOrder := []struct {
 		Object string
@@ -301,8 +301,11 @@ func TestBuildDomainFile(t *testing.T) {
 			t.Errorf("Methods[%d] = %s.%s, want %s.%s", i, got.Object.Name, got.Field.GoFieldName, w.Object, w.Field)
 		}
 	}
-	if len(build.Objects) != 1 || build.Objects[0].Name != "Todo" {
+	if len(build.Objects) != 1 || build.Objects[0].Object.Name != "Todo" {
 		t.Errorf("Objects = %v", build.Objects)
+	}
+	if build.Objects[0].TypeName != "TodoResolver" {
+		t.Errorf("Objects[0].TypeName = %q, want %q", build.Objects[0].TypeName, "TodoResolver")
 	}
 }
 

@@ -128,7 +128,7 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			fg := groups[base]
 			outFile := filepath.Join(domainDir, base+".resolvers.go")
 
-			build := buildDomainFile(fg)
+			build := buildDomainFile(fg, d.raw)
 			build.EmitMutationStruct = base == mutationOwner
 			build.EmitQueryStruct = base == queryOwner
 			build.EmitSubscriptionStruct = base == subscriptionOwner
@@ -178,8 +178,15 @@ func schemaBase(schemaPath string) string {
 // list. The append order mirrors what gqlgen's resolvergen would produce:
 // alphabetical by parent object name (data.Objects is alpha-sorted upstream),
 // then schema-declaration order of fields.
-func buildDomainFile(fg *fileGroup) *domainFileBuild {
-	build := &domainFileBuild{Objects: fg.objects}
+func buildDomainFile(fg *fileGroup, rawDomain string) *domainFileBuild {
+	build := &domainFileBuild{}
+
+	for _, obj := range fg.objects {
+		build.Objects = append(build.Objects, &domainObjectBuild{
+			Object:   obj,
+			TypeName: objectResolverName(rawDomain, obj.Name),
+		})
+	}
 
 	for _, df := range fg.fields {
 		build.Methods = append(build.Methods, &domainMethodBuild{Object: df.Object, Field: df.Field})
@@ -190,9 +197,16 @@ func buildDomainFile(fg *fileGroup) *domainFileBuild {
 
 // ctor is a per-object constructor for a migrated domain — emits
 // `(r *Resolver) Todo() generated.TodoResolver { return &todos.TodoResolver{} }`.
+//
+// TypeName is the GQL type name (used both as the constructor method name and
+// as the suffix on the generated.<TypeName>Resolver interface that gqlgen
+// emits). StructName is the actual struct in the domain package, which may
+// differ when the GQL type name shares the domain prefix and gets stripped
+// (e.g. catalog/CatalogCategory → catalog.CategoryResolver).
 type ctor struct {
-	TypeName string // "Todo"
-	Domain   string // "todos"
+	TypeName   string // "CatalogCategory" — drives method name + generated.<...>Resolver
+	StructName string // "CategoryResolver" — actual struct in the domain package
+	Domain     string // "catalog"
 }
 
 // embed is a per-domain root struct value-embedded into one of the
@@ -269,7 +283,11 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		}
 
 		for _, obj := range d.objects {
-			ctors = append(ctors, ctor{TypeName: obj.Name, Domain: pkg})
+			ctors = append(ctors, ctor{
+				TypeName:   obj.Name,
+				StructName: objectResolverName(d.raw, obj.Name),
+				Domain:     pkg,
+			})
 			objectDomains[pkg] = true
 		}
 	}

@@ -185,7 +185,15 @@ func (rw *astRewriter) bodySource(filename string, body *goast.BlockStmt) string
 type domainMethodBuild struct {
 	Object         *codegen.Object
 	Field          *codegen.Field
+	ReceiverType   string // resolved receiver type name used in the func decl
 	Implementation string // "" → generate panic stub
+}
+
+// domainObjectBuild pairs a non-root codegen.Object with the resolver struct
+// name the domain package should emit for it (post strip-prefix).
+type domainObjectBuild struct {
+	Object   *codegen.Object
+	TypeName string // e.g. "CategoryResolver"
 }
 
 type domainFileBuild struct {
@@ -209,7 +217,7 @@ type domainFileBuild struct {
 	EmitSubscriptionStruct bool
 
 	// Non-root object struct declarations (e.g. `type TodoResolver struct{}`).
-	Objects []*codegen.Object
+	Objects []*domainObjectBuild
 
 	RemainingSource string // unknown functions from the previous file version; emitted as a commented-out warning block
 
@@ -252,6 +260,18 @@ func (b *domainFileBuild) Imports() string {
 // name (which would trigger revive's package-stutter rule, e.g.
 // todos.TodosMutation).
 func domainStructPrefix(rawDomain string) string {
+	pascal := pascalDomain(rawDomain)
+	if pascal == "" {
+		return ""
+	}
+
+	return "Mixin" + pascal
+}
+
+// pascalDomain returns the PascalCase form of a raw schema-directory name,
+// treating dashes and underscores as word boundaries: "business-process" →
+// "BusinessProcess", "order_flow" → "OrderFlow", "todos" → "Todos".
+func pascalDomain(rawDomain string) string {
 	if rawDomain == "" {
 		return ""
 	}
@@ -259,7 +279,6 @@ func domainStructPrefix(rawDomain string) string {
 		return r == '-' || r == '_'
 	})
 	var b strings.Builder
-	b.WriteString("Mixin")
 	for _, p := range parts {
 		p = strings.ToLower(p)
 		if p == "" {
@@ -272,10 +291,50 @@ func domainStructPrefix(rawDomain string) string {
 	return b.String()
 }
 
+// stripDomainPrefix removes the PascalCase form of rawDomain from the front
+// of typeName, when typeName starts with it and the remainder begins with an
+// uppercase letter (so we never split a word in half). If typeName equals the
+// prefix exactly, the remainder is empty — callers render that as a bare
+// "Resolver" type. If no prefix matches, typeName is returned unchanged.
+//
+//	("catalog", "CatalogCategory") → "Category"
+//	("import",  "ImportStatus")    → "Status"
+//	("import",  "Entity")          → "Entity"   (no prefix match)
+//	("tasks",   "Task")            → "Task"     (Task does not start with Tasks)
+//	("catalog", "Catalog")         → ""         (exact match → bare Resolver)
+func stripDomainPrefix(rawDomain, typeName string) string {
+	prefix := pascalDomain(rawDomain)
+	if prefix == "" || typeName == "" {
+		return typeName
+	}
+	if !strings.HasPrefix(typeName, prefix) {
+		return typeName
+	}
+	rest := typeName[len(prefix):]
+	if rest == "" {
+		return ""
+	}
+	c := rest[0]
+	if c < 'A' || c > 'Z' {
+		return typeName
+	}
+
+	return rest
+}
+
+// objectResolverName returns the generated struct name for a non-root resolver
+// in a domain package — the stripped GQL type name plus "Resolver", or just
+// "Resolver" when the GQL type name equals the domain prefix.
+func objectResolverName(rawDomain, gqlObjectName string) string {
+	stripped := stripDomainPrefix(rawDomain, gqlObjectName)
+
+	return stripped + "Resolver"
+}
+
 // receiverFor returns the receiver type name used for the given method.
 // Root methods land on the kind-specific Mixin struct; non-root methods land
-// on <Type>Resolver.
-func receiverFor(m *domainMethodBuild, mutationType, queryType, subscriptionType string) string {
+// on the (possibly stripped) <Type>Resolver in the domain package.
+func receiverFor(m *domainMethodBuild, rawDomain, mutationType, queryType, subscriptionType string) string {
 	if m.Object.Root {
 		switch m.Object.Name {
 		case "Mutation":
@@ -287,7 +346,7 @@ func receiverFor(m *domainMethodBuild, mutationType, queryType, subscriptionType
 		}
 	}
 
-	return m.Object.Name + "Resolver"
+	return objectResolverName(rawDomain, m.Object.Name)
 }
 
 // restoreImpls fills in the Implementation field of each method by reading
@@ -297,11 +356,11 @@ func receiverFor(m *domainMethodBuild, mutationType, queryType, subscriptionType
 // receiver isn't found in the domain dir (first-time migration — body still
 // lived in the root package when resolvergen captured prevImpl), falls back to
 // the plugin's migratedImpls cache populated during Implement().
-func restoreImpls(methods []*domainMethodBuild, rw *astRewriter, migrated map[string]string, receiverType func(*domainMethodBuild) string) {
+func restoreImpls(methods []*domainMethodBuild, rw *astRewriter, migrated map[string]string) {
 	for _, m := range methods {
 		body := ""
 		if rw != nil {
-			body = strings.TrimSpace(rw.getMethodBody(receiverType(m), m.Field.GoFieldName))
+			body = strings.TrimSpace(rw.getMethodBody(m.ReceiverType, m.Field.GoFieldName))
 		}
 		if body == "" && migrated != nil && m.Object != nil {
 			body = strings.TrimSpace(migrated[m.Object.Name+"."+m.Field.GoFieldName])
@@ -324,9 +383,11 @@ func renderDomainFile(
 	queryType := prefix + "Query"
 	subscriptionType := prefix + "Subscription"
 
-	restoreImpls(build.Methods, rw, migrated, func(m *domainMethodBuild) string {
-		return receiverFor(m, mutationType, queryType, subscriptionType)
-	})
+	for _, m := range build.Methods {
+		m.ReceiverType = receiverFor(m, rawDomain, mutationType, queryType, subscriptionType)
+	}
+
+	restoreImpls(build.Methods, rw, migrated)
 
 	for _, m := range build.Methods {
 		if !m.Object.Root {
@@ -434,7 +495,7 @@ const objectCtorsTemplate = `
 
 {{ range $c := .Ctors }}
 func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
-	return &{{ $c.Domain }}.{{ $c.TypeName }}Resolver{}
+	return &{{ $c.Domain }}.{{ $c.StructName }}{}
 }
 {{ end }}
 
@@ -499,7 +560,7 @@ func (s *{{ $.SubscriptionStructName }}) {{ $m.Field.GoFieldName }}{{ $m.Field.S
 {{- end }}
 {{- else }}
 // {{ $m.Field.GoFieldName }} is the resolver for the {{ $m.Field.Name }} field.
-func (r *{{ ucFirst $m.Object.Name }}Resolver) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
+func (r *{{ $m.ReceiverType }}) {{ $m.Field.GoFieldName }}{{ $m.Field.ShortResolverDeclaration }} {
 	{{- if $m.Implementation }}
 	{{ $m.Implementation }}
 	{{- else }}
@@ -522,8 +583,8 @@ type {{ .SubscriptionStructName }} struct{}
 {{ end }}
 
 {{ range $obj := .Objects }}
-// {{ ucFirst $obj.Name }}Resolver implements generated.{{ ucFirst $obj.Name }}Resolver structurally (Go duck typing).
-type {{ ucFirst $obj.Name }}Resolver struct{}
+// {{ $obj.TypeName }} implements generated.{{ ucFirst $obj.Object.Name }}Resolver structurally (Go duck typing).
+type {{ $obj.TypeName }} struct{}
 {{ end }}
 
 {{ if (ne .RemainingSource "") }}
