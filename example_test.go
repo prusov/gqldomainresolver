@@ -19,8 +19,9 @@ func ExampleNew() {
 
 // Restrict migration to a subset of domains. Used during incremental
 // migration of an existing project, where domains move to Tier-2 packages
-// one at a time. Names are matched against the *raw* schema-directory name.
-// Names that are not present in the schema are silently tolerated.
+// one at a time. Names are matched against the *raw* schema-directory name
+// (case-sensitive). Names that are not present in the schema cause codegen
+// to fail with a clear error so typos can't silently degrade to a no-op.
 func ExampleWithEnabledDomains() {
 	plugin, err := gqldomainresolver.New(
 		gqldomainresolver.WithEnabledDomains("todos", "users", "business-process"),

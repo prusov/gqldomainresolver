@@ -2,6 +2,8 @@ package gqldomainresolver
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/99designs/gqlgen/codegen"
 )
@@ -54,8 +56,13 @@ type Option func(*Plugin)
 
 // WithEnabledDomains restricts migration to the listed schema-directory names.
 // Names are matched against the *raw* directory name (e.g. "business-process",
-// not the normalized "businessprocess"). Duplicates are deduplicated; empty
-// entries are dropped.
+// not the normalized "businessprocess") and are case-sensitive. Duplicates are
+// deduplicated; empty entries are dropped.
+//
+// Names that don't correspond to any directory in the schema cause codegen to
+// fail with a clear error — typos and case mismatches can't silently degrade
+// to a no-op. This is checked at GenerateCode time, after gqlgen has loaded
+// the schema.
 //
 // Calling this option — even with no arguments — switches the plugin out of
 // the default "all domains" mode into an explicit allowlist. WithEnabledDomains()
@@ -152,6 +159,48 @@ func (p *Plugin) domainFor(schemaPath string) domain {
 	}
 
 	return d
+}
+
+// validateAllowlist fails codegen if WithEnabledDomains lists a name that
+// does not appear as a raw schema-directory in the schema. Catches typos and
+// case mismatches ("Todos" vs "todos") that previously degraded silently to
+// "domain not migrated".
+//
+// nil enabledSet (greenfield default) and an explicit empty allowlist
+// (migration bootstrap) are both passes — the loop over the allowlist is
+// empty in those cases.
+func (p *Plugin) validateAllowlist(data *codegen.Data) error {
+	if p.enabledSet == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, obj := range data.Objects {
+		for _, f := range obj.Fields {
+			if !f.IsResolver {
+				continue
+			}
+			d := extractDomain(f.Position.Src.Name, p.keywordPrefix)
+			if !d.IsZero() {
+				seen[d.Raw] = true
+			}
+		}
+	}
+	var unknown []string
+	for raw := range p.enabledSet {
+		if !seen[raw] {
+			unknown = append(unknown, raw)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	quoted := make([]string, len(unknown))
+	for i, u := range unknown {
+		quoted[i] = fmt.Sprintf("%q", u)
+	}
+
+	return fmt.Errorf("gqldomainresolver: WithEnabledDomains references domains not present in the schema: %s — check spelling and case (the raw directory name as on disk)", strings.Join(quoted, ", "))
 }
 
 var _ interface {

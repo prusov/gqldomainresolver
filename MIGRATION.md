@@ -292,11 +292,15 @@ automatically:
 | `import`                 | `gqlimport`             |
 | `2fa`                    | `gql2fa`                |
 
-The allowlist always takes the **raw** name as it appears on disk:
+The allowlist always takes the **raw** name as it appears on disk
+(case-sensitive):
 
 ```go
 WithEnabledDomains("business-process", "import", "2fa") // not "businessprocess" etc.
 ```
+
+A name that does not match any directory in the schema fails codegen with a
+clear error — typos and case mismatches don't silently degrade to a no-op.
 
 The keyword prefix defaults to `gql` and applies to Go keywords, the literal
 name `schema`, and names starting with a digit. Override with

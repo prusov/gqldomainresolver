@@ -51,6 +51,10 @@ func appendUniqueObject(objs []*codegen.Object, obj *codegen.Object) []*codegen.
 // GenerateCode generates files in domain packages.
 // Called by api.Generate() AFTER resolvergen.
 func (p *Plugin) GenerateCode(data *codegen.Data) error {
+	if err := p.validateAllowlist(data); err != nil {
+		return err
+	}
+
 	domains, migratedBases, err := p.collectDomains(data)
 	if err != nil {
 		return err

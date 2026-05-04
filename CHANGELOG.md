@@ -10,6 +10,14 @@ minor versions; breaking changes will be called out explicitly here.
 
 ## [Unreleased]
 
+### Changed
+- `WithEnabledDomains` now fails codegen if any listed name doesn't match a
+  schema directory (previously silently no-op'd). Catches typos and
+  case mismatches like `WithEnabledDomains("Todos")` for a `todos/` dir.
+- Domain-collision diagnostics aggregate every clash into one error
+  (previously bailed on the first), so a single codegen run surfaces the
+  full list to fix.
+
 ## [0.1.0] - Initial release
 
 ### Added

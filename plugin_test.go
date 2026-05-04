@@ -1,6 +1,72 @@
 package gqldomainresolver
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/99designs/gqlgen/codegen"
+)
+
+func dataWithObjects(objs ...*codegen.Object) *codegen.Data {
+	return &codegen.Data{Objects: objs}
+}
+
+func TestValidateAllowlist_NilAllowlistAlwaysOK(t *testing.T) {
+	t.Parallel()
+	p := mustNew(t) // greenfield: enabledSet == nil
+	if err := p.validateAllowlist(dataWithObjects(objWithResolverField("Todo", false, todoSchema))); err != nil {
+		t.Errorf("expected nil error for greenfield default, got %v", err)
+	}
+}
+
+func TestValidateAllowlist_EmptyAllowlistOK(t *testing.T) {
+	t.Parallel()
+	// Migration-bootstrap: explicit empty allowlist is a no-op, must not error.
+	p := mustNew(t, WithEnabledDomains())
+	if err := p.validateAllowlist(dataWithObjects(objWithResolverField("Todo", false, todoSchema))); err != nil {
+		t.Errorf("expected nil error for empty allowlist, got %v", err)
+	}
+}
+
+func TestValidateAllowlist_KnownDomainsOK(t *testing.T) {
+	t.Parallel()
+	p := mustNew(t, WithEnabledDomains("todos", "users"))
+	data := dataWithObjects(
+		objWithResolverField("Todo", false, todoSchema),
+		objWithResolverField("User", false, userSchema),
+	)
+	if err := p.validateAllowlist(data); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+func TestValidateAllowlist_UnknownNamesAggregated(t *testing.T) {
+	t.Parallel()
+	// Three unknowns + one valid — only the unknowns must surface, sorted.
+	p := mustNew(t, WithEnabledDomains("todos", "Todos", "user", "billing"))
+	data := dataWithObjects(
+		objWithResolverField("Todo", false, todoSchema),
+		objWithResolverField("User", false, userSchema),
+	)
+	err := p.validateAllowlist(data)
+	if err == nil {
+		t.Fatal("expected error for unknown allowlist entries")
+	}
+	msg := err.Error()
+	for _, want := range []string{`"Todos"`, `"billing"`, `"user"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %s in %q", want, msg)
+		}
+	}
+	if strings.Contains(msg, `"todos"`) {
+		t.Errorf("valid name leaked: %q", msg)
+	}
+	// Sorted: "Todos" < "billing" < "user" by Go's strings.Sort (ASCII upper < lower).
+	if strings.Index(msg, `"Todos"`) > strings.Index(msg, `"billing"`) ||
+		strings.Index(msg, `"billing"`) > strings.Index(msg, `"user"`) {
+		t.Errorf("unknown names not sorted: %q", msg)
+	}
+}
 
 func TestDomainFor_NoOptionsMigratesEverything(t *testing.T) {
 	t.Parallel()
