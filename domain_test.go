@@ -8,77 +8,77 @@ func TestExtractDomain(t *testing.T) {
 	tests := []struct {
 		name       string
 		schemaPath string
-		want       Domain
+		want       domain
 	}{
 		{
 			name:       "todos domain",
 			schemaPath: "/abs/path/graph/schema/todos/todo.graphqls",
-			want:       Domain{Raw: "todos", Pkg: "todos"},
+			want:       domain{Raw: "todos", Pkg: "todos"},
 		},
 		{
 			name:       "users domain",
 			schemaPath: "/abs/path/graph/schema/users/user.graphqls",
-			want:       Domain{Raw: "users", Pkg: "users"},
+			want:       domain{Raw: "users", Pkg: "users"},
 		},
 		{
 			name:       "root schema — parent is schema",
 			schemaPath: "/abs/path/graph/schema/schema.graphqls",
-			want:       Domain{},
+			want:       domain{},
 		},
 		{
 			name:       "common directives — valid domain name",
 			schemaPath: "/abs/path/graph/schema/common/directives.graphqls",
-			want:       Domain{Raw: "common", Pkg: "common"},
+			want:       domain{Raw: "common", Pkg: "common"},
 		},
 		{
 			name:       "directory with dash — strip-only lowercase",
 			schemaPath: "/abs/path/graph/schema/business-process/x.graphqls",
-			want:       Domain{Raw: "business-process", Pkg: "businessprocess"},
+			want:       domain{Raw: "business-process", Pkg: "businessprocess"},
 		},
 		{
 			name:       "directory with underscore — strip-only lowercase",
 			schemaPath: "/abs/path/graph/schema/order_flow/x.graphqls",
-			want:       Domain{Raw: "order_flow", Pkg: "orderflow"},
+			want:       domain{Raw: "order_flow", Pkg: "orderflow"},
 		},
 		{
 			name:       "mixed case directory normalises to lowercase",
 			schemaPath: "/abs/path/graph/schema/OrderFlow/x.graphqls",
-			want:       Domain{Raw: "OrderFlow", Pkg: "orderflow"},
+			want:       domain{Raw: "OrderFlow", Pkg: "orderflow"},
 		},
 		{
 			name:       "reserved keyword: import",
 			schemaPath: "/abs/path/graph/schema/import/x.graphqls",
-			want:       Domain{Raw: "import", Pkg: "gqlimport"},
+			want:       domain{Raw: "import", Pkg: "gqlimport"},
 		},
 		{
 			name:       "reserved keyword: type",
 			schemaPath: "/abs/path/graph/schema/type/x.graphqls",
-			want:       Domain{Raw: "type", Pkg: "gqltype"},
+			want:       domain{Raw: "type", Pkg: "gqltype"},
 		},
 		{
 			name:       "reserved keyword: func",
 			schemaPath: "/abs/path/graph/schema/func/x.graphqls",
-			want:       Domain{Raw: "func", Pkg: "gqlfunc"},
+			want:       domain{Raw: "func", Pkg: "gqlfunc"},
 		},
 		{
 			name:       "leading digit gets keyword prefix",
 			schemaPath: "/abs/path/graph/schema/2fa/x.graphqls",
-			want:       Domain{Raw: "2fa", Pkg: "gql2fa"},
+			want:       domain{Raw: "2fa", Pkg: "gql2fa"},
 		},
 		{
 			name:       "only filename, no parent dir",
 			schemaPath: "schema.graphqls",
-			want:       Domain{},
+			want:       domain{},
 		},
 		{
 			name:       "directory of only separators normalises to empty",
 			schemaPath: "/a/b/-_-/x.graphqls",
-			want:       Domain{},
+			want:       domain{},
 		},
 		{
 			name:       "nested schema path with multiple segments",
 			schemaPath: "/a/b/c/orders/order.graphqls",
-			want:       Domain{Raw: "orders", Pkg: "orders"},
+			want:       domain{Raw: "orders", Pkg: "orders"},
 		},
 	}
 
@@ -123,7 +123,7 @@ func TestNormalizeDomain(t *testing.T) {
 
 func TestExtractDomain_CustomPrefix(t *testing.T) {
 	got := extractDomain("/x/schema/import/x.graphqls", "domain")
-	want := Domain{Raw: "import", Pkg: "domainimport"}
+	want := domain{Raw: "import", Pkg: "domainimport"}
 	if got != want {
 		t.Errorf("got %+v, want %+v", got, want)
 	}

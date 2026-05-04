@@ -168,7 +168,7 @@ func objWithResolverField(name string, root bool, schemaPath string) *codegen.Ob
 // ctor + wrapper (so existing root resolvers keep compiling during gradual
 // migration).
 func TestCollectRootCtors_DisabledDomainGetsRootWrapper(t *testing.T) {
-	p := New(WithEnabledDomains("todos"))
+	p := mustNew(t, WithEnabledDomains("todos"))
 
 	objs := []*codegen.Object{
 		objWithResolverField("Todo", false, todoSchema), // todos enabled → skip
@@ -192,7 +192,7 @@ func TestCollectRootCtors_DisabledDomainGetsRootWrapper(t *testing.T) {
 // the entry point for projects just adopting the plugin — no domain has been
 // migrated yet, so the plugin must behave like default gqlgen would.
 func TestCollectRootCtors_NoAllowlistEverythingWraps(t *testing.T) {
-	p := New()
+	p := mustNew(t)
 
 	objs := []*codegen.Object{
 		objWithResolverField("Todo", false, todoSchema),
@@ -214,7 +214,7 @@ func TestCollectRootCtors_NoAllowlistEverythingWraps(t *testing.T) {
 // Sanity check that the original behaviour (all domains migrated → no root
 // wrappers) is preserved.
 func TestCollectRootCtors_AllEnabledNoRoots(t *testing.T) {
-	p := New(WithEnabledDomains("todos", "users"))
+	p := mustNew(t, WithEnabledDomains("todos", "users"))
 
 	objs := []*codegen.Object{
 		objWithResolverField("Todo", false, todoSchema),

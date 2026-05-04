@@ -64,7 +64,7 @@ func TestImplement(t *testing.T) {
 		},
 	}
 
-	p := New(WithEnabledDomains("todos"))
+	p := mustNew(t, WithEnabledDomains("todos"))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := p.Implement(tt.prevImpl, tt.field.Field)
@@ -89,7 +89,7 @@ func TestImplement(t *testing.T) {
 // that GenerateCode can rehydrate the body inside the new domain package
 // (where the AST rewriter sees an empty / non-existent dir).
 func TestImplement_StashesPrevImplForMigratedDomain(t *testing.T) {
-	p := New(WithEnabledDomains("todos"))
+	p := mustNew(t, WithEnabledDomains("todos"))
 
 	mutationObj := makeObject("Mutation", true)
 	field := makeFieldWithPos("CreateTodo", mutationObj, todoSchema)

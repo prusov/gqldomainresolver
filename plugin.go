@@ -19,6 +19,10 @@ const DefaultKeywordPrefix = "gql"
 // via WithEnabledDomains. With an empty allowlist the plugin is a no-op —
 // adding the plugin to a project introduces no diff until the user enables
 // a specific domain. This enables incremental migration of large projects.
+//
+// Plugin is not safe for concurrent use. Construct one instance per
+// api.Generate() call; gqlgen runs single-threaded today, but Implement()
+// mutates internal state and parallel codegen would race.
 type Plugin struct {
 	// enabledSet is keyed by the *raw* schema directory name — that is what
 	// the user sees on disk, so it is the user-facing key for the allowlist.
@@ -30,13 +34,9 @@ type Plugin struct {
 	keywordPrefix string
 
 	// migratedImpls captures the previous resolver body of each field whose
-	// domain becomes enabled. resolvergen passes prevImpl (the body of the
-	// hand-written method on the root-package wrapper, e.g. *todoResolver) into
-	// Implement() and then overwrites the source file. By the time
-	// GenerateCode() runs the body is gone from disk, so the AST rewriter on
-	// the domain package can't find it on first migration. We stash it here
-	// keyed by "<ObjectName>.<GoFieldName>" so renderDomainFile can fall back
-	// to it when no body is found in the domain package.
+	// domain becomes enabled, so first-time migrations can rehydrate the
+	// domain-package method from prevImpl after resolvergen has overwritten
+	// the original file. See Implement().
 	migratedImpls map[string]string
 }
 
@@ -68,7 +68,7 @@ func WithEnabledDomains(domains ...string) Option {
 //
 // The prefix must be a non-empty valid Go identifier prefix: it must start
 // with an ASCII lowercase letter and may contain only lowercase letters and
-// digits afterwards. Invalid prefixes cause New() to panic.
+// digits afterwards. Invalid prefixes cause New() to return an error.
 func WithKeywordPrefix(prefix string) Option {
 	return func(p *Plugin) {
 		p.keywordPrefix = prefix
@@ -78,8 +78,8 @@ func WithKeywordPrefix(prefix string) Option {
 // New constructs the plugin. With no options the allowlist is empty and the
 // plugin is a no-op — call WithEnabledDomains to migrate specific domains.
 //
-// Panics if WithKeywordPrefix was passed an invalid prefix.
-func New(opts ...Option) *Plugin {
+// Returns an error if WithKeywordPrefix was passed an invalid prefix.
+func New(opts ...Option) (*Plugin, error) {
 	p := &Plugin{
 		migratedImpls: map[string]string{},
 		keywordPrefix: DefaultKeywordPrefix,
@@ -88,10 +88,10 @@ func New(opts ...Option) *Plugin {
 		opt(p)
 	}
 	if err := validateKeywordPrefix(p.keywordPrefix); err != nil {
-		panic(fmt.Sprintf("domainresolver: %v", err))
+		return nil, fmt.Errorf("domainresolver: %w", err)
 	}
 
-	return p
+	return p, nil
 }
 
 // validateKeywordPrefix rejects empty/non-identifier prefixes early so a bad
@@ -115,24 +115,23 @@ func validateKeywordPrefix(prefix string) error {
 	return nil
 }
 
-// migratedImplKey is the lookup key for stashed prevImpl bodies.
 func migratedImplKey(objectName, goFieldName string) string {
 	return objectName + "." + goFieldName
 }
 
-func (p *Plugin) Name() string { return "domain-resolver" }
+func (p *Plugin) Name() string { return "domainresolver" }
 
 // domainFor returns the domain of a schema file, filtered through the
 // allowlist. Domains not in the allowlist (or any domain when the allowlist
-// is empty) are returned as the zero Domain — equivalent to a root field
+// is empty) are returned as the zero domain — equivalent to a root field
 // with no domain.
-func (p *Plugin) domainFor(schemaPath string) Domain {
+func (p *Plugin) domainFor(schemaPath string) domain {
 	d := extractDomain(schemaPath, p.keywordPrefix)
 	if d.IsZero() {
-		return Domain{}
+		return domain{}
 	}
 	if !p.enabledSet[d.Raw] {
-		return Domain{}
+		return domain{}
 	}
 
 	return d

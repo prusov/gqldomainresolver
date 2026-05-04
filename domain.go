@@ -14,7 +14,7 @@ var goKeywords = map[string]bool{
 	"select": true, "struct": true, "switch": true, "type": true, "var": true,
 }
 
-// Domain represents a schema domain extracted from a .graphqls file path.
+// domain represents a schema domain extracted from a .graphqls file path.
 //
 // Raw is the schema directory name as it appears on disk (e.g.
 // "business-process"). It is used to identify the source for the allowlist
@@ -26,16 +26,15 @@ var goKeywords = map[string]bool{
 //
 // An empty Pkg means "skip" — the field falls back to the safety-net resolver
 // in the root package.
-type Domain struct {
+type domain struct {
 	Raw string
 	Pkg string
 }
 
-// IsZero reports whether the domain is the empty/skip value.
-func (d Domain) IsZero() bool { return d.Pkg == "" }
+func (d domain) IsZero() bool { return d.Pkg == "" }
 
 // extractDomain returns the domain of a .graphqls file path,
-// or the zero Domain for root-level schema files.
+// or the zero domain for root-level schema files.
 //
 // Examples (default keyword prefix "gql"):
 //
@@ -46,23 +45,23 @@ func (d Domain) IsZero() bool { return d.Pkg == "" }
 //	/abs/path/graph/schema/order_flow/x.graphqls         → {Raw:"order_flow", Pkg:"orderflow"}
 //	/abs/path/graph/schema/import/x.graphqls             → {Raw:"import", Pkg:"gqlimport"}
 //	/abs/path/graph/schema/2fa/x.graphqls                → {Raw:"2fa", Pkg:"gql2fa"}
-func extractDomain(schemaPath, keywordPrefix string) Domain {
+func extractDomain(schemaPath, keywordPrefix string) domain {
 	parts := strings.Split(filepath.ToSlash(schemaPath), "/")
 	if len(parts) < 2 {
-		return Domain{}
+		return domain{}
 	}
 	parent := parts[len(parts)-2]
 	// "schema" is reserved as the "root, no domain" marker — a literal directory
 	// of that name still maps to the root convention rather than being normalized.
 	if parent == "" || parent == "schema" {
-		return Domain{}
+		return domain{}
 	}
 	pkg := normalizeDomain(parent, keywordPrefix)
 	if pkg == "" {
-		return Domain{}
+		return domain{}
 	}
 
-	return Domain{Raw: parent, Pkg: pkg}
+	return domain{Raw: parent, Pkg: pkg}
 }
 
 // normalizeDomain converts a schema directory name into a valid Go package

@@ -13,10 +13,10 @@ import (
 	"github.com/99designs/gqlgen/codegen/templates"
 )
 
-// Import mirrors gqlgen's internal/rewrite.Import. We can't import that
+// importSpec mirrors gqlgen's internal/rewrite.Import. We can't import that
 // package (it's internal), so we replicate the minimal shape needed to
 // re-register hand-written imports via templates.CurrentImports.Reserve.
-type Import struct {
+type importSpec struct {
 	Alias      string
 	ImportPath string
 }
@@ -91,12 +91,12 @@ func (rw *astRewriter) getMethodBody(typeName, methodName string) string {
 // imports for types it knows from codegen.Data, so anything else (e.g.
 // a third-party package referenced solely in a method body) would be
 // dropped and the regenerated file would fail to compile.
-func (rw *astRewriter) existingImports(outFile string) []Import {
+func (rw *astRewriter) existingImports(outFile string) []importSpec {
 	file := rw.fileFor(outFile)
 	if file == nil {
 		return nil
 	}
-	var imps []Import
+	var imps []importSpec
 	for _, i := range file.Imports {
 		path, err := strconv.Unquote(i.Path.Value)
 		if err != nil {
@@ -106,7 +106,7 @@ func (rw *astRewriter) existingImports(outFile string) []Import {
 		if i.Name != nil {
 			alias = i.Name.Name
 		}
-		imps = append(imps, Import{Alias: alias, ImportPath: path})
+		imps = append(imps, importSpec{Alias: alias, ImportPath: path})
 	}
 
 	return imps
@@ -212,7 +212,7 @@ type domainFileBuild struct {
 	// only appear inside copied method bodies survive regeneration. Mirrors
 	// gqlgen's resolvergen plugin (see internal/rewrite.ExistingImports +
 	// File.Imports() in plugin/resolvergen/resolver.go).
-	imports []Import
+	imports []importSpec
 }
 
 // Imports re-registers every import from the previous file version with the
