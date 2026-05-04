@@ -1,21 +1,12 @@
 package domainresolver
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 )
 
-// writeFile is a test helper that writes content to a file inside dir.
-func writeFile(t *testing.T, dir, name, content string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-		t.Fatalf("writeFile: %v", err)
-	}
-}
-
-// TestASTRewriter_GetMethodBody_PointerReceiver extracts body from a pointer-receiver method.
 func TestASTRewriter_GetMethodBody_PointerReceiver(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.resolvers.go", `package todos
 
@@ -38,8 +29,8 @@ func (r *TodoResolver) Something() (string, error) {
 	}
 }
 
-// TestASTRewriter_GetMethodBody_ValueReceiver extracts body from a value-receiver method.
 func TestASTRewriter_GetMethodBody_ValueReceiver(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.resolvers.go", `package todos
 
@@ -62,8 +53,8 @@ func (r TodoResolver) Something() string {
 	}
 }
 
-// TestASTRewriter_GetMethodBody_NotFound returns empty string for an unknown method.
 func TestASTRewriter_GetMethodBody_NotFound(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.resolvers.go", `package todos
 
@@ -83,8 +74,8 @@ func (r *TodoResolver) User() string { return "user" }
 	}
 }
 
-// TestASTRewriter_GetMethodBody_WrongType returns empty if receiver type doesn't match.
 func TestASTRewriter_GetMethodBody_WrongType(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.resolvers.go", `package todos
 
@@ -104,8 +95,8 @@ func (r *UserResolver) Something() string { return "user" }
 	}
 }
 
-// TestNewASTRewriter_EmptyDir returns error for an already-empty directory.
 func TestNewASTRewriter_EmptyDir(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	rw, err := newASTRewriter(dir)
 	if err == nil {
@@ -116,10 +107,8 @@ func TestNewASTRewriter_EmptyDir(t *testing.T) {
 	}
 }
 
-// TestASTRewriter_ExistingImports_Plain captures import paths from the file
-// matching outFile. Regression for the bug where third-party imports referenced
-// only inside copied method bodies were dropped on regeneration.
 func TestASTRewriter_ExistingImports_Plain(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.resolvers.go", `package todos
 
@@ -161,8 +150,8 @@ func (r *TodoResolver) Something(ctx context.Context) string {
 	}
 }
 
-// TestASTRewriter_ExistingImports_Aliased captures named, blank and dot imports.
 func TestASTRewriter_ExistingImports_Aliased(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.resolvers.go", `package todos
 
@@ -202,9 +191,8 @@ var _ = Y
 	}
 }
 
-// TestASTRewriter_ExistingImports_PerFile only returns imports from the
-// requested file, not from siblings in the same dir.
 func TestASTRewriter_ExistingImports_PerFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.resolvers.go", `package todos
 
@@ -230,9 +218,8 @@ var _ = user.Y
 	}
 }
 
-// TestASTRewriter_ExistingImports_MissingFile returns nil when the requested
-// file isn't part of the parsed set.
 func TestASTRewriter_ExistingImports_MissingFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	writeFile(t, dir, "todo.resolvers.go", `package todos
 
@@ -252,8 +239,8 @@ var _ = todo.X
 	}
 }
 
-// TestNewASTRewriter_NonExistentDir returns error for a missing directory.
 func TestNewASTRewriter_NonExistentDir(t *testing.T) {
+	t.Parallel()
 	rw, err := newASTRewriter("/nonexistent/path")
 	if err == nil {
 		t.Error("expected error for non-existent dir, got nil")

@@ -6,6 +6,7 @@ import (
 )
 
 func TestImplement(t *testing.T) {
+	t.Parallel()
 	mutationObj := makeObject("Mutation", true)
 	queryObj := makeObject("Query", true)
 	todoObj := makeObject("Todo", false)
@@ -67,6 +68,7 @@ func TestImplement(t *testing.T) {
 	p := mustNew(t, WithEnabledDomains("todos"))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := p.Implement(tt.prevImpl, tt.field.Field)
 			if tt.wantPrefix != "" {
 				if !strings.HasPrefix(got, tt.wantPrefix) {
@@ -89,6 +91,7 @@ func TestImplement(t *testing.T) {
 // that GenerateCode can rehydrate the body inside the new domain package
 // (where the AST rewriter sees an empty / non-existent dir).
 func TestImplement_StashesPrevImplForMigratedDomain(t *testing.T) {
+	t.Parallel()
 	p := mustNew(t, WithEnabledDomains("todos"))
 
 	mutationObj := makeObject("Mutation", true)
@@ -113,6 +116,7 @@ func TestImplement_StashesPrevImplForMigratedDomain(t *testing.T) {
 }
 
 func TestPanicStub_Format(t *testing.T) {
+	t.Parallel()
 	mutationObj := makeObject("Mutation", true)
 	field := makeFieldWithPos("CreateTodo", mutationObj, todoSchema)
 	field.Name = "createTodo"

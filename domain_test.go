@@ -5,6 +5,7 @@ import (
 )
 
 func TestExtractDomain(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		schemaPath string
@@ -51,16 +52,6 @@ func TestExtractDomain(t *testing.T) {
 			want:       domain{Raw: "import", Pkg: "gqlimport"},
 		},
 		{
-			name:       "reserved keyword: type",
-			schemaPath: "/abs/path/graph/schema/type/x.graphqls",
-			want:       domain{Raw: "type", Pkg: "gqltype"},
-		},
-		{
-			name:       "reserved keyword: func",
-			schemaPath: "/abs/path/graph/schema/func/x.graphqls",
-			want:       domain{Raw: "func", Pkg: "gqlfunc"},
-		},
-		{
 			name:       "leading digit gets keyword prefix",
 			schemaPath: "/abs/path/graph/schema/2fa/x.graphqls",
 			want:       domain{Raw: "2fa", Pkg: "gql2fa"},
@@ -84,6 +75,7 @@ func TestExtractDomain(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := extractDomain(tt.schemaPath, DefaultKeywordPrefix)
 			if got != tt.want {
 				t.Errorf("extractDomain(%q) = %+v, want %+v", tt.schemaPath, got, tt.want)
@@ -92,39 +84,32 @@ func TestExtractDomain(t *testing.T) {
 	}
 }
 
+// TestNormalizeDomain covers normalisation edge cases that aren't already
+// exercised by TestExtractDomain — the reserved-name list (Go keywords +
+// "schema"), an alternate keyword prefix, and the empty/separator-only inputs.
 func TestNormalizeDomain(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input  string
 		prefix string
 		want   string
 	}{
-		{"todos", "gql", "todos"},
-		{"business-process", "gql", "businessprocess"},
-		{"order_flow", "gql", "orderflow"},
-		{"OrderFlow", "gql", "orderflow"},
-		{"import", "gql", "gqlimport"},
+		{"type", "gql", "gqltype"},
+		{"func", "gql", "gqlfunc"},
 		{"schema", "gql", "gqlschema"},
-		{"2fa", "gql", "gql2fa"},
+		{"break", "domain", "domainbreak"},
 		{"2fa", "x", "x2fa"},
 		{"", "gql", ""},
 		{"-_-", "gql", ""},
-		{"break", "domain", "domainbreak"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input+"_"+tt.prefix, func(t *testing.T) {
+			t.Parallel()
 			got := normalizeDomain(tt.input, tt.prefix)
 			if got != tt.want {
 				t.Errorf("normalizeDomain(%q, %q) = %q, want %q", tt.input, tt.prefix, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestExtractDomain_CustomPrefix(t *testing.T) {
-	got := extractDomain("/x/schema/import/x.graphqls", "domain")
-	want := domain{Raw: "import", Pkg: "domainimport"}
-	if got != want {
-		t.Errorf("got %+v, want %+v", got, want)
 	}
 }

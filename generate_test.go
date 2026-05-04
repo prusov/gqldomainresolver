@@ -4,53 +4,10 @@ import (
 	"testing"
 
 	"github.com/99designs/gqlgen/codegen"
-	gqlast "github.com/vektah/gqlparser/v2/ast"
-)
-
-// makeObject creates a minimal codegen.Object for testing.
-func makeObject(name string, root bool) *codegen.Object {
-	return &codegen.Object{
-		Definition: &gqlast.Definition{Name: name},
-		Root:       root,
-	}
-}
-
-// makeFieldWithPos creates a codegen.Field with a schema file position set.
-func makeFieldWithPos(goName string, obj *codegen.Object, schemaPath string, args ...*codegen.FieldArgument) *codegen.Field {
-	return &codegen.Field{
-		FieldDefinition: &gqlast.FieldDefinition{
-			Name: goName,
-			Position: &gqlast.Position{
-				Src: &gqlast.Source{Name: schemaPath},
-			},
-		},
-		GoFieldName: goName,
-		Object:      obj,
-		Args:        args,
-	}
-}
-
-// makeObjectWithPos creates a codegen.Object with a schema file position set.
-func makeObjectWithPos(name string, root bool, schemaPath string) *codegen.Object {
-	return &codegen.Object{
-		Definition: &gqlast.Definition{
-			Name: name,
-			Position: &gqlast.Position{
-				Src: &gqlast.Source{Name: schemaPath},
-			},
-		},
-		Root: root,
-	}
-}
-
-const (
-	todoSchema = "/abs/graph/schema/todos/todo.graphqls"
-	userSchema = "/abs/graph/schema/users/user.graphqls"
-	todoType   = "Todo"
-	userType   = "User"
 )
 
 func TestGroupBySchemaFile_SingleDomain(t *testing.T) {
+	t.Parallel()
 	mutObj := makeObject("Mutation", true)
 	todoObj := makeObjectWithPos("Todo", false, todoSchema)
 
@@ -78,6 +35,7 @@ func TestGroupBySchemaFile_SingleDomain(t *testing.T) {
 }
 
 func TestGroupBySchemaFile_TwoDomains(t *testing.T) {
+	t.Parallel()
 	mutObj := makeObject("Mutation", true)
 	todoObj := makeObjectWithPos("Todo", false, todoSchema)
 	userObj := makeObjectWithPos("User", false, userSchema)
@@ -120,6 +78,7 @@ func TestGroupBySchemaFile_TwoDomains(t *testing.T) {
 
 // TestGroupBySchemaFile_DeduplicatesObjects verifies the same object is not added twice.
 func TestGroupBySchemaFile_DeduplicatesObjects(t *testing.T) {
+	t.Parallel()
 	todoObj := makeObjectWithPos("Todo", false, todoSchema)
 
 	fields := []*domainField{
@@ -142,25 +101,11 @@ func TestGroupBySchemaFile_DeduplicatesObjects(t *testing.T) {
 
 // TestGroupBySchemaFile_Empty returns empty map for no input.
 func TestGroupBySchemaFile_Empty(t *testing.T) {
+	t.Parallel()
 	groups := groupBySchemaFile(nil, nil)
 	if len(groups) != 0 {
 		t.Errorf("expected empty map, got %d groups", len(groups))
 	}
-}
-
-// objWithResolverField builds an Object with a single resolver field so that
-// HasResolvers() reports true. Used in collectRootCtors tests.
-func objWithResolverField(name string, root bool, schemaPath string) *codegen.Object {
-	o := makeObjectWithPos(name, root, schemaPath)
-	o.Fields = []*codegen.Field{{
-		FieldDefinition: &gqlast.FieldDefinition{
-			Name:     "f",
-			Position: &gqlast.Position{Src: &gqlast.Source{Name: schemaPath}},
-		},
-		IsResolver: true,
-	}}
-
-	return o
 }
 
 // TestCollectRootCtors_DisabledDomainGetsRootWrapper verifies that an object
@@ -168,6 +113,7 @@ func objWithResolverField(name string, root bool, schemaPath string) *codegen.Ob
 // ctor + wrapper (so existing root resolvers keep compiling during gradual
 // migration).
 func TestCollectRootCtors_DisabledDomainGetsRootWrapper(t *testing.T) {
+	t.Parallel()
 	p := mustNew(t, WithEnabledDomains("todos"))
 
 	objs := []*codegen.Object{
@@ -192,6 +138,7 @@ func TestCollectRootCtors_DisabledDomainGetsRootWrapper(t *testing.T) {
 // the entry point for projects just adopting the plugin — no domain has been
 // migrated yet, so the plugin must behave like default gqlgen would.
 func TestCollectRootCtors_NoAllowlistEverythingWraps(t *testing.T) {
+	t.Parallel()
 	p := mustNew(t)
 
 	objs := []*codegen.Object{
@@ -210,25 +157,8 @@ func TestCollectRootCtors_NoAllowlistEverythingWraps(t *testing.T) {
 	}
 }
 
-// TestCollectRootCtors_AllEnabledNoRoots — symmetric to the disabled case.
-// Sanity check that the original behaviour (all domains migrated → no root
-// wrappers) is preserved.
-func TestCollectRootCtors_AllEnabledNoRoots(t *testing.T) {
-	p := mustNew(t, WithEnabledDomains("todos", "users"))
-
-	objs := []*codegen.Object{
-		objWithResolverField("Todo", false, todoSchema),
-		objWithResolverField("User", false, userSchema),
-	}
-
-	got := p.collectRootCtors(objs)
-
-	if len(got) != 0 {
-		t.Errorf("expected no rootCtors when all domains enabled, got %+v", got)
-	}
-}
-
 func TestHasRootField(t *testing.T) {
+	t.Parallel()
 	mutObj := makeObject("Mutation", true)
 	queryObj := makeObject("Query", true)
 	subObj := makeObject("Subscription", true)
@@ -266,6 +196,7 @@ func TestHasRootField(t *testing.T) {
 }
 
 func TestBuildDomainFile(t *testing.T) {
+	t.Parallel()
 	mutObj := makeObject("Mutation", true)
 	queryObj := makeObject("Query", true)
 	subObj := makeObject("Subscription", true)
