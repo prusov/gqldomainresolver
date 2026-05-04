@@ -29,7 +29,8 @@ func ExampleWithEnabledDomains() {
 	if err != nil {
 		panic(err)
 	}
-	_ = plugin
+	fmt.Println(plugin.Name())
+	// Output: gqldomainresolver
 }
 
 // Migration bootstrap: WithEnabledDomains() with no arguments produces an
@@ -43,7 +44,8 @@ func ExampleWithEnabledDomains_bootstrap() {
 	if err != nil {
 		panic(err)
 	}
-	_ = plugin
+	fmt.Println(plugin.Name())
+	// Output: gqldomainresolver
 }
 
 // Override the prefix used when a domain name collides with a Go keyword,
@@ -58,5 +60,6 @@ func ExampleWithKeywordPrefix() {
 	if err != nil {
 		panic(err)
 	}
-	_ = plugin
+	fmt.Println(plugin.Name())
+	// Output: gqldomainresolver
 }
