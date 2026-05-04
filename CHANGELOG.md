@@ -9,3 +9,23 @@ While the major version is `0`, the public API is allowed to break between
 minor versions; breaking changes will be called out explicitly here.
 
 ## [Unreleased]
+
+## [0.1.0] - Initial release
+
+### Added
+- `gqldomainresolver.New(opts ...Option) (*Plugin, error)` — gqlgen plugin
+  that splits the resolver package into per-domain Go packages, decoupling
+  domain code from `graph/generated`.
+- `WithEnabledDomains(domains ...string)` — incremental-migration allowlist
+  keyed by raw schema-directory names. Calling with no arguments produces
+  an explicit empty allowlist (plugin is a no-op — migration bootstrap).
+- `WithKeywordPrefix(prefix string)` — override for the prefix prepended to
+  domain names that collide with Go keywords, equal `schema`, or start with
+  a digit. Default `gql` (`DefaultKeywordPrefix`).
+- Two-tier output layout: thin Tier-1 root resolver package
+  (`mutation.resolvers.go` / `query.resolvers.go` /
+  `subscription.resolvers.go` / `object.resolvers.go`), plus per-domain
+  Tier-2 packages that satisfy gqlgen interfaces structurally.
+- Hand-written method bodies preserved across regeneration via AST
+  extraction; first-time migrations rehydrate from `prevImpl` cache.
+- Safety-net resolver template (`templates/resolver.gotpl`).

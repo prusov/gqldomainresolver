@@ -1,7 +1,12 @@
 # gqldomainresolver
 
+[![CI](https://github.com/prusov/gqldomainresolver/actions/workflows/ci.yml/badge.svg)](https://github.com/prusov/gqldomainresolver/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/prusov/gqldomainresolver.svg)](https://pkg.go.dev/github.com/prusov/gqldomainresolver)
+
 A gqlgen plugin that splits resolvers into per-domain Go packages, so domain
 code no longer imports `graph/generated`.
+
+Requires Go 1.26+. Licensed under [MIT](./LICENSE).
 
 ## Why
 

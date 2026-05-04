@@ -231,9 +231,15 @@ will repeat for every subsequent domain.
    because the template skipped emission. They are harmless to keep but
    create review noise on subsequent runs.
 
+   The plugin removes them automatically (see `cleanupMigratedFiles`),
+   but if any are left behind because the file was hand-edited or
+   gqlgen wrote an unexpected basename, find them with:
+
    ```bash
-   rm graph/resolver/<domain-prefix>-*.resolvers.go
+   git status --short graph/resolver/ | awk '/^ ?D /{print $2}'
    ```
+
+   and remove with `git rm`.
 
 7. **Stage as renames, not delete+add.** git's similarity threshold for
    rename detection is 50%. After fixing imports, run:

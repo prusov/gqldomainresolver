@@ -21,7 +21,7 @@ end-to-end. The companion repo at <https://github.com/prusov/gqlgendomain>
 (`cmd/server/main_test.go`). When making non-trivial changes here:
 
 1. Clone gqlgendomain as a sibling directory (`../gqlgendomain`).
-2. In its `go.mod`, ensure `replace github.com/prusov/gqldomainresolver => ../domainresolver` points at your working copy.
+2. In its `go.mod`, ensure `replace github.com/prusov/gqldomainresolver => ../gqldomainresolver` points at your working copy.
 3. Run the full pipeline:
    ```bash
    (cd ../gqlgendomain && go run ./cmd/gqlgen && go build ./... && ./scripts/test.sh)
