@@ -44,5 +44,6 @@ jobs:
         with:
           # Pin a known-good version. Bump deliberately — a 'latest'-style
           # value lets a new lint release red the master branch out of nowhere.
-          # v2.x required: v1.x is built on Go 1.23 and rejects go 1.26 modules.
-          version: v2.3.0
+          # Go 1.26 support added in golangci-lint v2.9.0; older builds reject
+          # the module's go directive at config-load time.
+          version: v2.12.1
