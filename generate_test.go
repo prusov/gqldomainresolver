@@ -1,10 +1,53 @@
 package gqldomainresolver
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/99designs/gqlgen/codegen"
 )
+
+func TestCollisionError_NoCollisions(t *testing.T) {
+	t.Parallel()
+	in := map[string]map[string]bool{
+		"todos": {"todos": true},
+		"users": {"users": true},
+	}
+	if err := collisionError(in); err != nil {
+		t.Errorf("expected nil, got %v", err)
+	}
+}
+
+func TestCollisionError_AggregatesAllCollisions(t *testing.T) {
+	t.Parallel()
+	in := map[string]map[string]bool{
+		"businessprocess": {"business-process": true, "business_process": true},
+		"orderflow":       {"order-flow": true, "order_flow": true, "OrderFlow": true},
+		"todos":           {"todos": true}, // not a collision — must not appear
+	}
+	err := collisionError(in)
+	if err == nil {
+		t.Fatal("expected collision error")
+	}
+	msg := err.Error()
+	// Each colliding package must appear with all its raw names.
+	wantSubstrings := []string{
+		`package "businessprocess": "business-process", "business_process"`,
+		`package "orderflow": "OrderFlow", "order-flow", "order_flow"`,
+	}
+	for _, s := range wantSubstrings {
+		if !strings.Contains(msg, s) {
+			t.Errorf("missing %q in %q", s, msg)
+		}
+	}
+	if strings.Contains(msg, `"todos"`) {
+		t.Errorf("non-colliding pkg leaked into error: %q", msg)
+	}
+	// Pkgs sorted alphabetically — "businessprocess" before "orderflow".
+	if strings.Index(msg, "businessprocess") > strings.Index(msg, "orderflow") {
+		t.Errorf("expected pkgs in alpha order, got: %q", msg)
+	}
+}
 
 func TestGroupBySchemaFile_SingleDomain(t *testing.T) {
 	t.Parallel()

@@ -79,6 +79,10 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 func (p *Plugin) collectDomains(data *codegen.Data) (map[string]*domainData, map[string]bool, error) {
 	domains := map[string]*domainData{}
 	migratedBases := map[string]bool{}
+	// pkg → set of raw names that normalize to it. We accumulate every clash
+	// (instead of bailing on the first) so the user sees the complete list in
+	// one codegen run rather than discovering them one-by-one.
+	rawsByPkg := map[string]map[string]bool{}
 
 	for _, obj := range data.Objects {
 		for _, f := range obj.Fields {
@@ -93,13 +97,20 @@ func (p *Plugin) collectDomains(data *codegen.Data) (map[string]*domainData, map
 			}
 			migratedBases[schemaBase(f.Position.Src.Name)] = true
 
+			if rawsByPkg[d.Pkg] == nil {
+				rawsByPkg[d.Pkg] = map[string]bool{}
+			}
+			rawsByPkg[d.Pkg][d.Raw] = true
+
 			existing, ok := domains[d.Pkg]
 			if !ok {
 				existing = &domainData{raw: d.Raw}
 				domains[d.Pkg] = existing
 			} else if existing.raw != d.Raw {
-				return nil, nil, fmt.Errorf("gqldomainresolver: schema directories %q and %q both normalize to package %q — rename one or change the keyword prefix",
-					existing.raw, d.Raw, d.Pkg)
+				// Skip appending — the package is collision-broken; we'll
+				// report it after the loop. Continuing the walk lets us
+				// surface other collisions in the same run.
+				continue
 			}
 			existing.fields = append(existing.fields, &domainField{Object: obj, Field: f})
 
@@ -110,7 +121,43 @@ func (p *Plugin) collectDomains(data *codegen.Data) (map[string]*domainData, map
 		}
 	}
 
+	if err := collisionError(rawsByPkg); err != nil {
+		return nil, nil, err
+	}
+
 	return domains, migratedBases, nil
+}
+
+// collisionError formats every pkg → multiple-raws clash as one error. Pkgs
+// and their raw names are sorted so the message is deterministic across runs.
+func collisionError(rawsByPkg map[string]map[string]bool) error {
+	var collidedPkgs []string
+	for pkg, raws := range rawsByPkg {
+		if len(raws) > 1 {
+			collidedPkgs = append(collidedPkgs, pkg)
+		}
+	}
+	if len(collidedPkgs) == 0 {
+		return nil
+	}
+	sort.Strings(collidedPkgs)
+
+	var b strings.Builder
+	b.WriteString("gqldomainresolver: schema directories normalize to the same package — rename one of each group or change the keyword prefix:")
+	for _, pkg := range collidedPkgs {
+		raws := make([]string, 0, len(rawsByPkg[pkg]))
+		for r := range rawsByPkg[pkg] {
+			raws = append(raws, r)
+		}
+		sort.Strings(raws)
+		quoted := make([]string, len(raws))
+		for i, r := range raws {
+			quoted[i] = fmt.Sprintf("%q", r)
+		}
+		fmt.Fprintf(&b, "\n  package %q: %s", pkg, strings.Join(quoted, ", "))
+	}
+
+	return fmt.Errorf("%s", b.String())
 }
 
 // renderDomain writes every per-file output under resolverDir/pkg, picking
