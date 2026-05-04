@@ -3,7 +3,7 @@ package domainresolver_test
 import (
 	"fmt"
 
-	"git.dd-team.online/dd/gqlgendomain/plugin/domainresolver"
+	"github.com/prusov/domainresolver"
 )
 
 // Minimal construction. With no options the allowlist is empty and the plugin
