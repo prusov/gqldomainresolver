@@ -27,8 +27,6 @@ type domainData struct {
 	objects []*codegen.Object
 }
 
-// hasRootField reports whether fields contains a resolver field on the
-// root type named rootName ("Mutation" / "Query" / "Subscription").
 func hasRootField(fields []*domainField, rootName string) bool {
 	for _, f := range fields {
 		if f.Object.Root && f.Object.Name == rootName {
@@ -39,11 +37,46 @@ func hasRootField(fields []*domainField, rootName string) bool {
 	return false
 }
 
+// appendUniqueObject appends obj unless an object with the same name already exists.
+func appendUniqueObject(objs []*codegen.Object, obj *codegen.Object) []*codegen.Object {
+	for _, o := range objs {
+		if o.Name == obj.Name {
+			return objs
+		}
+	}
+
+	return append(objs, obj)
+}
+
 // GenerateCode generates files in domain packages.
 // Called by api.Generate() AFTER resolvergen.
 func (p *Plugin) GenerateCode(data *codegen.Data) error {
+	domains, migratedBases, err := p.collectDomains(data)
+	if err != nil {
+		return err
+	}
+
 	resolverDir := data.Config.Resolver.Dir()
 
+	for pkg, d := range domains {
+		if err := p.renderDomain(data, resolverDir, pkg, d); err != nil {
+			return err
+		}
+	}
+
+	if err := p.renderDomainConstructors(data, domains); err != nil {
+		return fmt.Errorf("render domain constructors: %w", err)
+	}
+
+	return cleanupMigratedFiles(resolverDir, migratedBases)
+}
+
+// collectDomains walks data.Objects, groups resolver fields by normalized
+// package name, and detects collisions where two raw schema-dir names
+// normalize to the same package. The returned migratedBases set lists
+// schema basenames whose root-package <base>.resolvers.go file was emptied
+// out by Implement() and should be deleted.
+func (p *Plugin) collectDomains(data *codegen.Data) (map[string]*domainData, map[string]bool, error) {
 	domains := map[string]*domainData{}
 	migratedBases := map[string]bool{}
 
@@ -54,101 +87,89 @@ func (p *Plugin) GenerateCode(data *codegen.Data) error {
 			}
 			// Group by the field's schema file, not the object's — needed for
 			// root types (Mutation/Query) whose fields span multiple schema files.
-			domain := p.domainFor(f.Position.Src.Name)
-			if domain.IsZero() {
+			d := p.domainFor(f.Position.Src.Name)
+			if d.IsZero() {
 				continue
 			}
 			migratedBases[schemaBase(f.Position.Src.Name)] = true
-			existing, ok := domains[domain.Pkg]
+
+			existing, ok := domains[d.Pkg]
 			if !ok {
-				domains[domain.Pkg] = &domainData{raw: domain.Raw}
-				existing = domains[domain.Pkg]
-			} else if existing.raw != domain.Raw {
-				// Two different schema-dir names normalized to the same Go
-				// package identifier. Bail out loudly — silently merging them
-				// would collapse user-meaningful directories into one package.
-				return fmt.Errorf("domainresolver: schema directories %q and %q both normalize to package %q — rename one or change the keyword prefix",
-					existing.raw, domain.Raw, domain.Pkg)
+				existing = &domainData{raw: d.Raw}
+				domains[d.Pkg] = existing
+			} else if existing.raw != d.Raw {
+				return nil, nil, fmt.Errorf("domainresolver: schema directories %q and %q both normalize to package %q — rename one or change the keyword prefix",
+					existing.raw, d.Raw, d.Pkg)
 			}
-			d := existing
-			d.fields = append(d.fields, &domainField{Object: obj, Field: f})
+			existing.fields = append(existing.fields, &domainField{Object: obj, Field: f})
 
 			// Only non-root types need a generated struct (e.g. TodoResolver).
 			if !obj.Root {
-				found := false
-				for _, o := range d.objects {
-					if o.Name == obj.Name {
-						found = true
-						break
-					}
-				}
-				if !found {
-					d.objects = append(d.objects, obj)
-				}
+				existing.objects = appendUniqueObject(existing.objects, obj)
 			}
 		}
 	}
 
-	for pkg, d := range domains {
-		domainDir := filepath.Join(resolverDir, pkg)
-		if err := os.MkdirAll(domainDir, 0o755); err != nil {
-			return fmt.Errorf("mkdir %s: %w", domainDir, err)
+	return domains, migratedBases, nil
+}
+
+// renderDomain writes every per-file output under resolverDir/pkg, picking
+// kind-owners so each Mixin<Domain><Kind> struct is declared exactly once.
+func (p *Plugin) renderDomain(data *codegen.Data, resolverDir, pkg string, d *domainData) error {
+	domainDir := filepath.Join(resolverDir, pkg)
+	if err := os.MkdirAll(domainDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", domainDir, err)
+	}
+
+	// On first run rw is nil (no package yet); renderDomainFile handles that.
+	rw, _ := newASTRewriter(domainDir)
+
+	groups := groupBySchemaFile(d.fields, d.objects)
+
+	bases := make([]string, 0, len(groups))
+	for b := range groups {
+		bases = append(bases, b)
+	}
+	sort.Strings(bases)
+
+	// Pick the alphabetically first base name with root fields of each kind
+	// so the type is declared exactly once per domain package.
+	mutationOwner, queryOwner, subscriptionOwner := "", "", ""
+	for _, b := range bases {
+		fg := groups[b]
+		if mutationOwner == "" && hasRootField(fg.fields, "Mutation") {
+			mutationOwner = b
 		}
-
-		// On first run rw is nil (no package yet); renderDomainFile handles that.
-		rw, _ := newASTRewriter(domainDir)
-
-		groups := groupBySchemaFile(d.fields, d.objects)
-
-		// Pick the alphabetically first base name with root fields of each kind
-		// so the type is declared exactly once per domain package.
-		bases := make([]string, 0, len(groups))
-		for b := range groups {
-			bases = append(bases, b)
+		if queryOwner == "" && hasRootField(fg.fields, "Query") {
+			queryOwner = b
 		}
-		sort.Strings(bases)
-
-		mutationOwner := ""
-		queryOwner := ""
-		subscriptionOwner := ""
-		for _, b := range bases {
-			fg := groups[b]
-			if mutationOwner == "" && hasRootField(fg.fields, "Mutation") {
-				mutationOwner = b
-			}
-			if queryOwner == "" && hasRootField(fg.fields, "Query") {
-				queryOwner = b
-			}
-			if subscriptionOwner == "" && hasRootField(fg.fields, "Subscription") {
-				subscriptionOwner = b
-			}
-		}
-
-		for _, base := range bases {
-			fg := groups[base]
-			outFile := filepath.Join(domainDir, base+".resolvers.go")
-
-			build := buildDomainFile(fg, d.raw)
-			build.EmitMutationStruct = base == mutationOwner
-			build.EmitQueryStruct = base == queryOwner
-			build.EmitSubscriptionStruct = base == subscriptionOwner
-
-			if err := renderDomainFile(data, pkg, d.raw, outFile, build, rw, p.migratedImpls); err != nil {
-				return fmt.Errorf("render %s: %w", outFile, err)
-			}
+		if subscriptionOwner == "" && hasRootField(fg.fields, "Subscription") {
+			subscriptionOwner = b
 		}
 	}
 
-	if err := p.renderDomainConstructors(data, domains); err != nil {
-		return fmt.Errorf("render domain constructors: %w", err)
+	for _, base := range bases {
+		fg := groups[base]
+		outFile := filepath.Join(domainDir, base+".resolvers.go")
+
+		build := buildDomainFile(fg, d.raw)
+		build.EmitMutationStruct = base == mutationOwner
+		build.EmitQueryStruct = base == queryOwner
+		build.EmitSubscriptionStruct = base == subscriptionOwner
+
+		if err := renderDomainFile(data, pkg, d.raw, outFile, build, rw, p.migratedImpls); err != nil {
+			return fmt.Errorf("render %s: %w", outFile, err)
+		}
 	}
 
-	// Every resolver field in a schema file shares the same domain (extracted
-	// from the file path). When that domain is enabled, Implement() returns ""
-	// for all of its fields, so the safety-net template emits zero methods —
-	// leaving resolvergen's <base>.resolvers.go with header+imports only.
-	// We know these basenames from the loop above, so we can delete the files
-	// directly without scanning the resolver dir.
+	return nil
+}
+
+// cleanupMigratedFiles deletes the root-package <base>.resolvers.go files
+// for schema basenames whose fields were fully handled by domain packages.
+// Implement() returned "" for every such field, so the safety-net template
+// produced a header-only file with no methods — safe to remove.
+func cleanupMigratedFiles(resolverDir string, migratedBases map[string]bool) error {
 	for base := range migratedBases {
 		path := filepath.Join(resolverDir, base+".resolvers.go")
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -198,14 +219,14 @@ func buildDomainFile(fg *fileGroup, rawDomain string) *domainFileBuild {
 type ctor struct {
 	TypeName   string // "CatalogCategory" — drives method name + generated.<...>Resolver
 	StructName string // "CategoryResolver" — actual struct in the domain package
-	Domain     string // "catalog"
+	Pkg        string // "catalog" — domain package import-path leaf
 }
 
 // embed is a per-domain root struct value-embedded into one of the
 // kind-specific Domain{Mutation,Query,Subscription}Resolvers structs.
 type embed struct {
 	TypeName string // "MixinTodosMutation"
-	Domain   string // "todos"
+	Pkg      string // "todos" — domain package import-path leaf
 }
 
 // rootCtor is a per-object constructor for an UN-migrated domain — emits a
@@ -239,6 +260,18 @@ func (p *Plugin) collectRootCtors(objects []*codegen.Object) []rootCtor {
 	return out
 }
 
+// rootKindSpec describes one of the per-kind constructor files emitted in
+// the root resolver package. There is exactly one spec per root kind
+// (Mutation/Query/Subscription).
+type rootKindSpec struct {
+	hasRoot     bool
+	kind        string // "Mutation" / "Query" / "Subscription"
+	structName  string // "DomainMutationResolvers"
+	wrapperName string // "mutationResolver"
+	fileName    string // "mutation.resolvers.go"
+	embeds      []embed
+}
+
 // renderDomainConstructors emits the constructor files in the root resolver
 // package, one file per root kind plus an object-constructor file:
 //
@@ -265,20 +298,20 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 		prefix := domainStructPrefix(d.raw)
 
 		if hasRootField(d.fields, "Mutation") {
-			mutationEmbeds = append(mutationEmbeds, embed{TypeName: prefix + "Mutation", Domain: pkg})
+			mutationEmbeds = append(mutationEmbeds, embed{TypeName: prefix + "Mutation", Pkg: pkg})
 		}
 		if hasRootField(d.fields, "Query") {
-			queryEmbeds = append(queryEmbeds, embed{TypeName: prefix + "Query", Domain: pkg})
+			queryEmbeds = append(queryEmbeds, embed{TypeName: prefix + "Query", Pkg: pkg})
 		}
 		if hasRootField(d.fields, "Subscription") {
-			subscriptionEmbeds = append(subscriptionEmbeds, embed{TypeName: prefix + "Subscription", Domain: pkg})
+			subscriptionEmbeds = append(subscriptionEmbeds, embed{TypeName: prefix + "Subscription", Pkg: pkg})
 		}
 
 		for _, obj := range d.objects {
 			ctors = append(ctors, ctor{
 				TypeName:   obj.Name,
 				StructName: objectResolverName(d.raw, obj.Name),
-				Domain:     pkg,
+				Pkg:        pkg,
 			})
 			objectDomains[pkg] = true
 		}
@@ -292,25 +325,14 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 	// types exist in the schema, so the wrapper structs and constructors must
 	// always be present too — otherwise an empty allowlist (or partial
 	// migration that skips a root) leaves the package un-compilable.
-	hasMutation := data.MutationRoot != nil
-	hasQuery := data.QueryRoot != nil
-	hasSubscription := data.SubscriptionRoot != nil
-
 	resolverDir := data.Config.Resolver.Dir()
 	resolverImport := data.Config.Resolver.ImportPath()
 	generatedPkg := data.Config.Exec.ImportPath()
 
-	kinds := []struct {
-		hasRoot     bool
-		kind        string // "Mutation" / "Query" / "Subscription"
-		structName  string // "DomainMutationResolvers"
-		wrapperName string // "mutationResolver"
-		fileName    string // "mutation.resolvers.go"
-		embeds      []embed
-	}{
-		{hasMutation, "Mutation", "DomainMutationResolvers", "mutationResolver", "mutation.resolvers.go", mutationEmbeds},
-		{hasQuery, "Query", "DomainQueryResolvers", "queryResolver", "query.resolvers.go", queryEmbeds},
-		{hasSubscription, "Subscription", "DomainSubscriptionResolvers", "subscriptionResolver", "subscription.resolvers.go", subscriptionEmbeds},
+	kinds := []rootKindSpec{
+		{data.MutationRoot != nil, "Mutation", "DomainMutationResolvers", "mutationResolver", "mutation.resolvers.go", mutationEmbeds},
+		{data.QueryRoot != nil, "Query", "DomainQueryResolvers", "queryResolver", "query.resolvers.go", queryEmbeds},
+		{data.SubscriptionRoot != nil, "Subscription", "DomainSubscriptionResolvers", "subscriptionResolver", "subscription.resolvers.go", subscriptionEmbeds},
 	}
 
 	for _, k := range kinds {
@@ -383,8 +405,8 @@ func (p *Plugin) renderDomainConstructors(data *codegen.Data, domains map[string
 
 func sortEmbeds(es []embed) {
 	sort.Slice(es, func(i, j int) bool {
-		if es[i].Domain != es[j].Domain {
-			return es[i].Domain < es[j].Domain
+		if es[i].Pkg != es[j].Pkg {
+			return es[i].Pkg < es[j].Pkg
 		}
 
 		return es[i].TypeName < es[j].TypeName
@@ -396,7 +418,7 @@ func sortEmbeds(es []embed) {
 func embedDomainImports(es []embed, resolverImport string) []string {
 	set := map[string]bool{}
 	for _, e := range es {
-		set[e.Domain] = true
+		set[e.Pkg] = true
 	}
 	out := make([]string, 0, len(set))
 	for d := range set {
@@ -434,17 +456,7 @@ func groupBySchemaFile(fields []*domainField, objects []*codegen.Object) map[str
 
 	for _, obj := range objects {
 		g := getGroup(obj.Position.Src.Name)
-		// An object may appear multiple times via different fields — dedupe.
-		found := false
-		for _, o := range g.objects {
-			if o.Name == obj.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			g.objects = append(g.objects, obj)
-		}
+		g.objects = appendUniqueObject(g.objects, obj)
 	}
 
 	return groups

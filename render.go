@@ -455,7 +455,7 @@ const rootKindTemplate = `
 
 type {{ .StructName }} struct {
 {{- range $e := .Embeds }}
-	{{ $e.Domain }}.{{ $e.TypeName }}
+	{{ $e.Pkg }}.{{ $e.TypeName }}
 {{- end }}
 }
 
@@ -481,7 +481,7 @@ const objectCtorsTemplate = `
 
 {{ range $c := .Ctors }}
 func (r *Resolver) {{ $c.TypeName }}() generated.{{ $c.TypeName }}Resolver {
-	return &{{ $c.Domain }}.{{ $c.StructName }}{}
+	return &{{ $c.Pkg }}.{{ $c.StructName }}{}
 }
 {{ end }}
 
