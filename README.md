@@ -160,19 +160,53 @@ Run it with:
 go run ./cmd/gqlgen
 ```
 
-### 3. Point gqlgen.yml at the safety-net resolver template
+### 3. Copy the safety-net resolver template into your project
 
-The plugin ships a resolver template at `github.com/prusov/gqldomainresolver/templates/resolver.gotpl`. Set it in `gqlgen.yml`:
+**This step is mandatory.** gqlgen loads `resolver_template` from a local file
+path (via `os.ReadFile`) — it does **not** resolve Go module paths. You must
+copy the template file out of this module into your own repository and commit
+it.
+
+Copy `templates/resolver.gotpl` from this module into your project. The
+recommended location is alongside your gqlgen entry point, e.g.
+`cmd/gqlgen/resolver.gotpl`:
+
+```bash
+# from your project root
+cp "$(go env GOMODCACHE)"/github.com/prusov/gqldomainresolver@*/templates/resolver.gotpl \
+   cmd/gqlgen/resolver.gotpl
+```
+
+Then point `gqlgen.yml` at the **local** path (relative to the directory you
+run `go run ./cmd/gqlgen` from — typically the project root):
 
 ```yaml
 resolver:
   layout: follow-schema
   dir: graph/resolver
   package: resolver
-  resolver_template: github.com/prusov/gqldomainresolver/templates/resolver.gotpl
+  resolver_template: cmd/gqlgen/resolver.gotpl
 ```
 
-This template skips method declarations for root fields that have a domain package (the plugin returns `""` from `Implement()`). Those methods reach callers via Go method promotion through the generated `Domain{Mutation,Query,Subscription}Resolvers` structs.
+Commit the copy so teammates and CI use the same template.
+
+**Keep the copy in sync.** When you upgrade `github.com/prusov/gqldomainresolver`
+re-copy the file — an out-of-date local copy is the most common source of
+mismatched output (e.g. duplicate method declarations on the root resolver).
+Consider adding a `make sync-template` target or a CI check that diffs the
+local copy against the version in `go.mod`'s module cache.
+
+**Why a copy and not a module reference?** gqlgen's `resolver_template` is read
+straight from the filesystem — it has no concept of Go modules at that layer.
+The template must therefore physically exist at a path your build can see.
+
+This template skips method declarations for root fields that have a domain
+package (the plugin returns `""` from `Implement()`). Those methods reach
+callers via Go method promotion through the generated
+`Domain{Mutation,Query,Subscription}Resolvers` structs. Any
+"compatible" template that respects the empty-`Implement()` contract works,
+but using gqlgen's default template will cause duplicate method declarations
+on the root resolver.
 
 ### 4. Create the Resolver struct
 
@@ -335,7 +369,7 @@ The import paths used in the generated `*.resolvers.go` files are derived automa
 
 - **Domain name = parent directory name** of the schema file. The name is normalized (strip-only lowercase) into a Go package identifier, so dashes, underscores, mixed case, Go keywords and leading digits are all supported. Two different directory names that normalize to the same package fail at codegen time with a clear collision error. The literal name `schema` remains reserved for the root convention.
 - A given resolver field belongs to exactly one domain — the one of its `.graphqls` file. Splitting one root field across multiple domain packages isn't supported.
-- The `resolver_template` in `gqlgen.yml` must be `github.com/prusov/gqldomainresolver/templates/resolver.gotpl` (or a compatible template that skips method emission when `Implement()` returns `""`). Using gqlgen's default template will cause duplicate method declarations on the root resolver.
+- The `resolver_template` in `gqlgen.yml` must point at a **local copy** of `templates/resolver.gotpl` from this module (gqlgen reads it as a file path, not a Go module path — see "Connecting to a project → step 3"). A compatible template that skips method emission when `Implement()` returns `""` also works. Using gqlgen's default template will cause duplicate method declarations on the root resolver.
 - Only one plugin per gqlgen run can implement `ResolverImplementer` — don't combine with another plugin that hooks the same interface.
 
 ## Troubleshooting
