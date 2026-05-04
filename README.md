@@ -18,7 +18,8 @@ method promotion: each generated wrapper (`mutationResolver` / `queryResolver`
 `DomainMutationResolvers` / `DomainQueryResolvers` / `DomainSubscriptionResolvers`,
 which value-embeds the matching per-domain
 `Mixin<Domain>Mutation/Query/Subscription` struct (each generated in its own
-`domain_<kind>_resolvers.go` file). Splitting per root kind avoids ambiguous selectors
+`mutation.resolvers.go` / `query.resolvers.go` / `subscription.resolvers.go`
+file). Splitting per root kind avoids ambiguous selectors
 when the same field name appears as both a `Query` and a `Subscription`
 (e.g. `userNotifications`).
 

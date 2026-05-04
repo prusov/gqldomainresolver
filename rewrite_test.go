@@ -252,31 +252,6 @@ var _ = todo.X
 	}
 }
 
-// TestASTRewriter_ExistingImports_LegacyFallback verifies that a request for
-// "<base>.resolvers.go" falls back to "<base>.go" when only the legacy file
-// exists. Regression for the rename from <base>.go → <base>.resolvers.go:
-// without the fallback, hand-written imports captured in the legacy file would
-// be dropped on the very first regen after the rename.
-func TestASTRewriter_ExistingImports_LegacyFallback(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, dir, "todo.go", `package todos
-
-import "example.com/todo"
-
-var _ = todo.X
-`)
-
-	rw, err := newASTRewriter(dir)
-	if err != nil {
-		t.Fatalf("newASTRewriter: %v", err)
-	}
-
-	got := rw.existingImports(filepath.Join(dir, "todo.resolvers.go"))
-	if len(got) != 1 || got[0].ImportPath != "example.com/todo" {
-		t.Errorf("existingImports(todo.resolvers.go) = %v, want [example.com/todo] (legacy fallback)", got)
-	}
-}
-
 // TestNewASTRewriter_NonExistentDir returns error for a missing directory.
 func TestNewASTRewriter_NonExistentDir(t *testing.T) {
 	rw, err := newASTRewriter("/nonexistent/path")

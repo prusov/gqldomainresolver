@@ -112,29 +112,19 @@ func (rw *astRewriter) existingImports(outFile string) []Import {
 	return imps
 }
 
-// fileFor returns the parsed AST for outFile. As a transition aid for
-// projects upgrading from the older naming convention, if outFile ends in
-// ".resolvers.go" and no parsed file matches, it falls back to the legacy
-// "<base>.go" sibling — letting hand-written imports and helper funcs in
-// the old file survive the rename.
+// fileFor returns the parsed AST for outFile.
 func (rw *astRewriter) fileFor(outFile string) *goast.File {
-	candidates := []string{outFile}
-	if strings.HasSuffix(outFile, ".resolvers.go") {
-		candidates = append(candidates, strings.TrimSuffix(outFile, ".resolvers.go")+".go")
+	target, err := filepath.Abs(outFile)
+	if err != nil {
+		return nil
 	}
-	for _, c := range candidates {
-		target, err := filepath.Abs(c)
-		if err != nil {
+	for filename, file := range rw.files {
+		abs, err := filepath.Abs(filename)
+		if err != nil || abs != target {
 			continue
 		}
-		for filename, file := range rw.files {
-			abs, err := filepath.Abs(filename)
-			if err != nil || abs != target {
-				continue
-			}
 
-			return file
-		}
+		return file
 	}
 
 	return nil
@@ -147,11 +137,7 @@ func (rw *astRewriter) remainingFuncs(outFile string) string {
 	if file == nil {
 		return ""
 	}
-	srcPath := outFile
-	if _, ok := rw.files[outFile]; !ok && strings.HasSuffix(outFile, ".resolvers.go") {
-		srcPath = strings.TrimSuffix(outFile, ".resolvers.go") + ".go"
-	}
-	src, err := os.ReadFile(srcPath)
+	src, err := os.ReadFile(outFile)
 	if err != nil {
 		return ""
 	}
