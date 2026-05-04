@@ -25,12 +25,16 @@
 // Go keyword, equal "schema", or start with a digit get a configurable
 // prefix prepended (default "gql", override with [WithKeywordPrefix]).
 //
-// # Opt-in migration
+// # Greenfield vs. migration
 //
-// The plugin is opt-in per domain via [WithEnabledDomains]. With an empty
-// allowlist the plugin is a no-op — adding it to a project introduces no
-// diff until a specific domain is enabled. This enables incremental
-// migration of large projects, one domain at a time.
+// With no options ([New] alone) every domain in the schema is migrated.
+// This is the greenfield default.
+//
+// To migrate an existing project incrementally, pass [WithEnabledDomains]
+// with the subset of domains to move first. Calling WithEnabledDomains()
+// with no arguments produces an explicit empty allowlist — the plugin
+// becomes a no-op, useful as a bootstrap step that wires the plugin into
+// a project without producing any diff.
 //
 // # Wiring
 //

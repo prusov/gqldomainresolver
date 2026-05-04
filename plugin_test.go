@@ -2,14 +2,32 @@ package gqldomainresolver
 
 import "testing"
 
-func TestDomainFor_EmptyAllowlist(t *testing.T) {
+func TestDomainFor_NoOptionsMigratesEverything(t *testing.T) {
 	t.Parallel()
+	// Greenfield default: New() with no options migrates every domain.
 	p := mustNew(t)
-	if got := p.domainFor(todoSchema); !got.IsZero() {
-		t.Errorf("empty allowlist must return zero domain, got %+v", got)
+	if got := p.domainFor(todoSchema); got != (domain{Raw: "todos", Pkg: "todos"}) {
+		t.Errorf("default config must migrate todos, got %+v", got)
 	}
+	if got := p.domainFor(userSchema); got != (domain{Raw: "users", Pkg: "users"}) {
+		t.Errorf("default config must migrate users, got %+v", got)
+	}
+	// Schema files with no domain (root-level) still return zero.
 	if got := p.domainFor("/abs/graph/schema/schema.graphqls"); !got.IsZero() {
 		t.Errorf("root file must return zero domain, got %+v", got)
+	}
+}
+
+func TestDomainFor_ExplicitEmptyAllowlistIsNoOp(t *testing.T) {
+	t.Parallel()
+	// WithEnabledDomains() with no arguments → explicit empty allowlist →
+	// nothing is migrated. This is the migration-bootstrap configuration.
+	p := mustNew(t, WithEnabledDomains())
+	if got := p.domainFor(todoSchema); !got.IsZero() {
+		t.Errorf("explicit empty allowlist must return zero domain, got %+v", got)
+	}
+	if got := p.domainFor(userSchema); !got.IsZero() {
+		t.Errorf("explicit empty allowlist must return zero domain, got %+v", got)
 	}
 }
 

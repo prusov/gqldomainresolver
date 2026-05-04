@@ -6,9 +6,8 @@ import (
 	"github.com/prusov/gqldomainresolver"
 )
 
-// Minimal construction. With no options the allowlist is empty and the plugin
-// is a no-op — it must be combined with WithEnabledDomains to migrate a
-// domain.
+// Greenfield default. With no options every domain in the schema is migrated
+// to its own Tier-2 package — typically what a new project wants.
 func ExampleNew() {
 	plugin, err := gqldomainresolver.New()
 	if err != nil {
@@ -18,12 +17,27 @@ func ExampleNew() {
 	// Output: gqldomainresolver
 }
 
-// Enable migration for one or more domains by their raw schema-directory name.
-// Names that are not present in the schema are silently tolerated, so an
-// allowlist can be edited ahead of the corresponding schema directory.
+// Restrict migration to a subset of domains. Used during incremental
+// migration of an existing project, where domains move to Tier-2 packages
+// one at a time. Names are matched against the *raw* schema-directory name.
+// Names that are not present in the schema are silently tolerated.
 func ExampleWithEnabledDomains() {
 	plugin, err := gqldomainresolver.New(
 		gqldomainresolver.WithEnabledDomains("todos", "users", "business-process"),
+	)
+	if err != nil {
+		panic(err)
+	}
+	_ = plugin
+}
+
+// Migration bootstrap: WithEnabledDomains() with no arguments produces an
+// explicit empty allowlist, so the plugin is a no-op. This lets a project
+// wire the plugin into its build before migrating any domain — the first
+// PR introduces zero diff in the existing resolvers.
+func ExampleWithEnabledDomains_bootstrap() {
+	plugin, err := gqldomainresolver.New(
+		gqldomainresolver.WithEnabledDomains(),
 	)
 	if err != nil {
 		panic(err)

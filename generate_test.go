@@ -133,13 +133,14 @@ func TestCollectRootCtors_DisabledDomainGetsRootWrapper(t *testing.T) {
 	}
 }
 
-// TestCollectRootCtors_NoAllowlistEverythingWraps verifies the empty-allowlist
-// case: every non-root object with resolvers becomes a root wrapper. This is
-// the entry point for projects just adopting the plugin — no domain has been
-// migrated yet, so the plugin must behave like default gqlgen would.
-func TestCollectRootCtors_NoAllowlistEverythingWraps(t *testing.T) {
+// TestCollectRootCtors_ExplicitEmptyAllowlistEverythingWraps verifies the
+// migration-bootstrap case: WithEnabledDomains() with no arguments → every
+// non-root object with resolvers becomes a root wrapper. The plugin behaves
+// like default gqlgen would, which is the no-op state used to wire the
+// plugin into a project before migrating anything.
+func TestCollectRootCtors_ExplicitEmptyAllowlistEverythingWraps(t *testing.T) {
 	t.Parallel()
-	p := mustNew(t)
+	p := mustNew(t, WithEnabledDomains())
 
 	objs := []*codegen.Object{
 		objWithResolverField("Todo", false, todoSchema),

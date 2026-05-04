@@ -15,10 +15,15 @@ const DefaultKeywordPrefix = "gql"
 // The import path for generated domain packages is derived at codegen time
 // from the resolver section of gqlgen.yml — the plugin is module-agnostic.
 //
-// The plugin is opt-in per domain: it migrates only domains explicitly listed
-// via WithEnabledDomains. With an empty allowlist the plugin is a no-op —
-// adding the plugin to a project introduces no diff until the user enables
-// a specific domain. This enables incremental migration of large projects.
+// By default — New() with no options — every domain in the schema is
+// migrated. This is the greenfield configuration.
+//
+// To restrict migration to a subset of domains, pass WithEnabledDomains.
+// This is used during incremental migration of an existing project, where
+// domains are moved to their own packages one at a time. An explicit empty
+// allowlist (WithEnabledDomains() with no arguments) makes the plugin a
+// no-op — useful as a bootstrap step in a migration so the plugin can be
+// wired up without producing any diff.
 //
 // Plugin is not safe for concurrent use. Construct one instance per
 // api.Generate() call; gqlgen runs single-threaded today, but Implement()
@@ -26,6 +31,10 @@ const DefaultKeywordPrefix = "gql"
 type Plugin struct {
 	// enabledSet is keyed by the *raw* schema directory name — that is what
 	// the user sees on disk, so it is the user-facing key for the allowlist.
+	//
+	// nil means "WithEnabledDomains was never called" → all domains are
+	// migrated (greenfield default). A non-nil empty map means "explicit
+	// empty allowlist" → no domain is migrated (migration bootstrap).
 	enabledSet map[string]bool
 
 	// keywordPrefix disambiguates domain names that would otherwise be
@@ -43,10 +52,15 @@ type Plugin struct {
 // Option configures a Plugin at construction time.
 type Option func(*Plugin)
 
-// WithEnabledDomains enables migration for the listed schema-directory names.
+// WithEnabledDomains restricts migration to the listed schema-directory names.
 // Names are matched against the *raw* directory name (e.g. "business-process",
 // not the normalized "businessprocess"). Duplicates are deduplicated; empty
 // entries are dropped.
+//
+// Calling this option — even with no arguments — switches the plugin out of
+// the default "all domains" mode into an explicit allowlist. WithEnabledDomains()
+// with no arguments produces an empty allowlist, which makes the plugin a
+// no-op (useful as a bootstrap step in an incremental migration).
 func WithEnabledDomains(domains ...string) Option {
 	return func(p *Plugin) {
 		if p.enabledSet == nil {
@@ -75,8 +89,10 @@ func WithKeywordPrefix(prefix string) Option {
 	}
 }
 
-// New constructs the plugin. With no options the allowlist is empty and the
-// plugin is a no-op — call WithEnabledDomains to migrate specific domains.
+// New constructs the plugin. With no options every domain is migrated
+// (greenfield default). Pass WithEnabledDomains to restrict migration to a
+// specific subset — typically during incremental migration of an existing
+// project.
 //
 // Returns an error if WithKeywordPrefix was passed an invalid prefix.
 func New(opts ...Option) (*Plugin, error) {
@@ -122,15 +138,16 @@ func migratedImplKey(objectName, goFieldName string) string {
 func (p *Plugin) Name() string { return "gqldomainresolver" }
 
 // domainFor returns the domain of a schema file, filtered through the
-// allowlist. Domains not in the allowlist (or any domain when the allowlist
-// is empty) are returned as the zero domain — equivalent to a root field
-// with no domain.
+// allowlist. When WithEnabledDomains was never called (enabledSet == nil),
+// every domain is migrated. When it was called — even with no arguments —
+// only the listed names are migrated; everything else returns the zero
+// domain (equivalent to a root field with no domain).
 func (p *Plugin) domainFor(schemaPath string) domain {
 	d := extractDomain(schemaPath, p.keywordPrefix)
 	if d.IsZero() {
 		return domain{}
 	}
-	if !p.enabledSet[d.Raw] {
+	if p.enabledSet != nil && !p.enabledSet[d.Raw] {
 		return domain{}
 	}
 
