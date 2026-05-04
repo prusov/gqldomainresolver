@@ -1,4 +1,4 @@
-module github.com/prusov/domainresolver
+module github.com/prusov/gqldomainresolver
 
 go 1.26
 

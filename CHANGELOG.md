@@ -23,5 +23,5 @@ minor versions; breaking changes will be called out explicitly here.
 - AST round-trip preserves hand-written method bodies and helper functions across regeneration.
 - Migrated-impl cache: bodies stashed during `Implement()` are rehydrated on first-time migration.
 
-[Unreleased]: https://github.com/prusov/domainresolver/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/prusov/domainresolver/releases/tag/v0.1.0
+[Unreleased]: https://github.com/prusov/gqldomainresolver/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/prusov/gqldomainresolver/releases/tag/v0.1.0

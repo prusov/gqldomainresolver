@@ -1,4 +1,4 @@
-# domainresolver
+# gqldomainresolver
 
 A gqlgen plugin that splits GraphQL resolvers into isolated domain packages, eliminating the large `graph/generated` import from business logic.
 
@@ -120,7 +120,7 @@ their bodies are preserved across regeneration — write them by hand.
 ### 1. Add the dependency
 
 ```bash
-go get <module-path>/plugin/domainresolver
+go get github.com/prusov/gqldomainresolver
 ```
 
 ### 2. Create a custom gqlgen entry point
@@ -137,7 +137,7 @@ import (
 
     "github.com/99designs/gqlgen/api"
     "github.com/99designs/gqlgen/codegen/config"
-    "<module-path>/plugin/domainresolver"
+    "github.com/prusov/gqldomainresolver"
 )
 
 func main() {
@@ -146,8 +146,8 @@ func main() {
         log.Fatal(err)
     }
     if err := api.Generate(cfg, api.AddPlugin(
-        domainresolver.New(
-            domainresolver.WithEnabledDomains("todos", "users"),
+        gqldomainresolver.New(
+            gqldomainresolver.WithEnabledDomains("todos", "users"),
         ),
     )); err != nil {
         log.Fatal(err)
@@ -162,14 +162,14 @@ go run ./cmd/gqlgen
 
 ### 3. Point gqlgen.yml at the safety-net resolver template
 
-The plugin ships a resolver template at `plugin/domainresolver/templates/resolver.gotpl`. Set it in `gqlgen.yml`:
+The plugin ships a resolver template at `github.com/prusov/gqldomainresolver/templates/resolver.gotpl`. Set it in `gqlgen.yml`:
 
 ```yaml
 resolver:
   layout: follow-schema
   dir: graph/resolver
   package: resolver
-  resolver_template: plugin/domainresolver/templates/resolver.gotpl
+  resolver_template: github.com/prusov/gqldomainresolver/templates/resolver.gotpl
 ```
 
 This template skips method declarations for root fields that have a domain package (the plugin returns `""` from `Implement()`). Those methods reach callers via Go method promotion through the generated `Domain{Mutation,Query,Subscription}Resolvers` structs.
@@ -215,7 +215,7 @@ impractical.
 1. **PR 1 — wire the plugin without migrating anything.**
 
    ```go
-   api.AddPlugin(domainresolver.New()) // empty allowlist → no-op
+   api.AddPlugin(gqldomainresolver.New()) // empty allowlist → no-op
    ```
 
    Set `resolver_template` in `gqlgen.yml`, add `cmd/gqlgen`, run
@@ -225,8 +225,8 @@ impractical.
 2. **PR 2..N — migrate one domain per PR.**
 
    ```go
-   domainresolver.New(
-       domainresolver.WithEnabledDomains("todos"), // add one name at a time
+   gqldomainresolver.New(
+       gqldomainresolver.WithEnabledDomains("todos"), // add one name at a time
    )
    ```
 
@@ -335,7 +335,7 @@ The import paths used in the generated `*.resolvers.go` files are derived automa
 
 - **Domain name = parent directory name** of the schema file. The name is normalized (strip-only lowercase) into a Go package identifier, so dashes, underscores, mixed case, Go keywords and leading digits are all supported. Two different directory names that normalize to the same package fail at codegen time with a clear collision error. The literal name `schema` remains reserved for the root convention.
 - A given resolver field belongs to exactly one domain — the one of its `.graphqls` file. Splitting one root field across multiple domain packages isn't supported.
-- The `resolver_template` in `gqlgen.yml` must be `plugin/domainresolver/templates/resolver.gotpl` (or a compatible template that skips method emission when `Implement()` returns `""`). Using gqlgen's default template will cause duplicate method declarations on the root resolver.
+- The `resolver_template` in `gqlgen.yml` must be `github.com/prusov/gqldomainresolver/templates/resolver.gotpl` (or a compatible template that skips method emission when `Implement()` returns `""`). Using gqlgen's default template will cause duplicate method declarations on the root resolver.
 - Only one plugin per gqlgen run can implement `ResolverImplementer` — don't combine with another plugin that hooks the same interface.
 
 ## Troubleshooting

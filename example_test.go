@@ -1,29 +1,29 @@
-package domainresolver_test
+package gqldomainresolver_test
 
 import (
 	"fmt"
 
-	"github.com/prusov/domainresolver"
+	"github.com/prusov/gqldomainresolver"
 )
 
 // Minimal construction. With no options the allowlist is empty and the plugin
 // is a no-op — it must be combined with WithEnabledDomains to migrate a
 // domain.
 func ExampleNew() {
-	plugin, err := domainresolver.New()
+	plugin, err := gqldomainresolver.New()
 	if err != nil {
 		panic(err)
 	}
 	fmt.Println(plugin.Name())
-	// Output: domainresolver
+	// Output: gqldomainresolver
 }
 
 // Enable migration for one or more domains by their raw schema-directory name.
 // Names that are not present in the schema are silently tolerated, so an
 // allowlist can be edited ahead of the corresponding schema directory.
 func ExampleWithEnabledDomains() {
-	plugin, err := domainresolver.New(
-		domainresolver.WithEnabledDomains("todos", "users", "business-process"),
+	plugin, err := gqldomainresolver.New(
+		gqldomainresolver.WithEnabledDomains("todos", "users", "business-process"),
 	)
 	if err != nil {
 		panic(err)
@@ -36,9 +36,9 @@ func ExampleWithEnabledDomains() {
 // (DefaultKeywordPrefix), so the directory "import" produces package
 // "gqlimport". Passing "dom" produces "domimport" instead.
 func ExampleWithKeywordPrefix() {
-	plugin, err := domainresolver.New(
-		domainresolver.WithKeywordPrefix("dom"),
-		domainresolver.WithEnabledDomains("import"),
+	plugin, err := gqldomainresolver.New(
+		gqldomainresolver.WithKeywordPrefix("dom"),
+		gqldomainresolver.WithEnabledDomains("import"),
 	)
 	if err != nil {
 		panic(err)

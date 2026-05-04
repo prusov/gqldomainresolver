@@ -1,11 +1,11 @@
-// Package domainresolver is a gqlgen plugin that splits the generated resolver
+// Package gqldomainresolver is a gqlgen plugin that splits the generated resolver
 // package into per-domain Go packages.
 //
 // The standard gqlgen layout puts every resolver method in a single
 // graph/resolver package, which forces every file to import
 // graph/generated. In large schemas this collapses the build cache: any edit
 // to a resolver invalidates the whole generated artifact (often hundreds of
-// MB) and rebuilds slow to a crawl. domainresolver keeps the original
+// MB) and rebuilds slow to a crawl. gqldomainresolver keeps the original
 // generated package intact for wiring and moves the resolver bodies out into
 // per-domain packages that have no dependency on graph/generated. The
 // per-domain packages satisfy the gqlgen interfaces by Go duck typing
@@ -38,7 +38,7 @@
 // gqlgen plugins. The plugin must run after resolvergen because it relies on
 // resolvergen's prevImpl handling for first-time migrations.
 //
-//	plugin, err := domainresolver.New(domainresolver.WithEnabledDomains("todos"))
+//	plugin, err := gqldomainresolver.New(gqldomainresolver.WithEnabledDomains("todos"))
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -50,4 +50,4 @@
 // alongside this plugin so non-migrated fields still get a panic stub.
 //
 // See the package README for a full integration walkthrough.
-package domainresolver
+package gqldomainresolver

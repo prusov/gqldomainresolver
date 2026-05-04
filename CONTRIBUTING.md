@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in `domainresolver`. This document covers the dev loop.
+Thanks for your interest in `gqldomainresolver`. This document covers the dev loop.
 
 ## Build & test
 
@@ -16,12 +16,12 @@ detector enabled.
 
 Unit tests cover most code paths but the rendering pipeline is best exercised
 end-to-end. The companion repo at <https://github.com/prusov/gqlgendomain>
-("gqlgendomain") is a working sample that drives `domainresolver` through
+("gqlgendomain") is a working sample that drives `gqldomainresolver` through
 `go run ./cmd/gqlgen` and then runs an HTTP integration test
 (`cmd/server/main_test.go`). When making non-trivial changes here:
 
 1. Clone gqlgendomain as a sibling directory (`../gqlgendomain`).
-2. In its `go.mod`, ensure `replace github.com/prusov/domainresolver => ../domainresolver` points at your working copy.
+2. In its `go.mod`, ensure `replace github.com/prusov/gqldomainresolver => ../domainresolver` points at your working copy.
 3. Run the full pipeline:
    ```bash
    (cd ../gqlgendomain && go run ./cmd/gqlgen && go build ./... && ./scripts/test.sh)

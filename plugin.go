@@ -1,4 +1,4 @@
-package domainresolver
+package gqldomainresolver
 
 import (
 	"fmt"
@@ -88,7 +88,7 @@ func New(opts ...Option) (*Plugin, error) {
 		opt(p)
 	}
 	if err := validateKeywordPrefix(p.keywordPrefix); err != nil {
-		return nil, fmt.Errorf("domainresolver: %w", err)
+		return nil, fmt.Errorf("gqldomainresolver: %w", err)
 	}
 
 	return p, nil
@@ -119,7 +119,7 @@ func migratedImplKey(objectName, goFieldName string) string {
 	return objectName + "." + goFieldName
 }
 
-func (p *Plugin) Name() string { return "domainresolver" }
+func (p *Plugin) Name() string { return "gqldomainresolver" }
 
 // domainFor returns the domain of a schema file, filtered through the
 // allowlist. Domains not in the allowlist (or any domain when the allowlist

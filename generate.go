@@ -1,4 +1,4 @@
-package domainresolver
+package gqldomainresolver
 
 import (
 	"fmt"
@@ -98,7 +98,7 @@ func (p *Plugin) collectDomains(data *codegen.Data) (map[string]*domainData, map
 				existing = &domainData{raw: d.Raw}
 				domains[d.Pkg] = existing
 			} else if existing.raw != d.Raw {
-				return nil, nil, fmt.Errorf("domainresolver: schema directories %q and %q both normalize to package %q — rename one or change the keyword prefix",
+				return nil, nil, fmt.Errorf("gqldomainresolver: schema directories %q and %q both normalize to package %q — rename one or change the keyword prefix",
 					existing.raw, d.Raw, d.Pkg)
 			}
 			existing.fields = append(existing.fields, &domainField{Object: obj, Field: f})

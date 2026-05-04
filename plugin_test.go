@@ -1,4 +1,4 @@
-package domainresolver
+package gqldomainresolver
 
 import "testing"
 
@@ -127,7 +127,7 @@ func TestNew_InvalidPrefixReturnsError(t *testing.T) {
 
 func TestPlugin_Name(t *testing.T) {
 	t.Parallel()
-	if got := mustNew(t).Name(); got != "domainresolver" {
-		t.Errorf("Name() = %q, want %q", got, "domainresolver")
+	if got := mustNew(t).Name(); got != "gqldomainresolver" {
+		t.Errorf("Name() = %q, want %q", got, "gqldomainresolver")
 	}
 }

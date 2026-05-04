@@ -1,4 +1,4 @@
-package domainresolver
+package gqldomainresolver
 
 import (
 	"strings"
