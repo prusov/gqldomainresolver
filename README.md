@@ -123,7 +123,9 @@ preserved across regeneration via AST extraction.
 
 Big-bang migration is impractical for any non-trivial codebase. The plugin
 supports incremental migration via `WithEnabledDomains` — wire the plugin in
-as a no-op first, then move one domain per PR.
+as a no-op first, then move one domain per PR. For projects that want the
+greenfield default minus a handful of large or in-flight domains, pair
+`New()` with `WithExcludedDomains("...")`.
 
 See **[MIGRATION.md](./MIGRATION.md)** for the full playbook.
 
@@ -131,10 +133,12 @@ See **[MIGRATION.md](./MIGRATION.md)** for the full playbook.
 
 - Godoc: <https://pkg.go.dev/github.com/prusov/gqldomainresolver>
 - Domain-name normalization, keyword prefix, allowlist semantics — see
-  godoc on [`New`], [`WithEnabledDomains`], [`WithKeywordPrefix`].
+  godoc on [`New`], [`WithEnabledDomains`], [`WithExcludedDomains`],
+  [`WithKeywordPrefix`].
 
 [`New`]: https://pkg.go.dev/github.com/prusov/gqldomainresolver#New
 [`WithEnabledDomains`]: https://pkg.go.dev/github.com/prusov/gqldomainresolver#WithEnabledDomains
+[`WithExcludedDomains`]: https://pkg.go.dev/github.com/prusov/gqldomainresolver#WithExcludedDomains
 [`WithKeywordPrefix`]: https://pkg.go.dev/github.com/prusov/gqldomainresolver#WithKeywordPrefix
 
 ## Limitations

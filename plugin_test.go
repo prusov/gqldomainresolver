@@ -68,6 +68,117 @@ func TestValidateAllowlist_UnknownNamesAggregated(t *testing.T) {
 	}
 }
 
+func TestValidateAllowlist_UnknownExcludeAggregated(t *testing.T) {
+	t.Parallel()
+	p := mustNew(t, WithExcludedDomains("billing", "Users"))
+	data := dataWithObjects(
+		objWithResolverField("Todo", false, todoSchema),
+		objWithResolverField("User", false, userSchema),
+	)
+	err := p.validateAllowlist(data)
+	if err == nil {
+		t.Fatal("expected error for unknown exclude entries")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "WithExcludedDomains") {
+		t.Errorf("error must reference WithExcludedDomains: %q", msg)
+	}
+	for _, want := range []string{`"Users"`, `"billing"`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %s in %q", want, msg)
+		}
+	}
+}
+
+func TestValidateAllowlist_UnknownEnabledAndExcluded(t *testing.T) {
+	t.Parallel()
+	// Both options have unknown entries — enabled is checked first and
+	// surfaces; the exclude error only matters once the allowlist is clean.
+	p := mustNew(t, WithEnabledDomains("typo"), WithExcludedDomains("billing"))
+	data := dataWithObjects(objWithResolverField("Todo", false, todoSchema))
+	err := p.validateAllowlist(data)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "WithEnabledDomains") {
+		t.Errorf("expected WithEnabledDomains error first, got %q", err)
+	}
+}
+
+func TestDomainFor_Excluded(t *testing.T) {
+	t.Parallel()
+	// Greenfield + exclude: everything migrates except listed names.
+	p := mustNew(t, WithExcludedDomains("users"))
+	if got := p.domainFor(todoSchema); got != (domain{Raw: "todos", Pkg: "todos"}) {
+		t.Errorf("todos must still migrate, got %+v", got)
+	}
+	if got := p.domainFor(userSchema); !got.IsZero() {
+		t.Errorf("excluded users must return zero domain, got %+v", got)
+	}
+}
+
+func TestDomainFor_EnabledMinusExcluded(t *testing.T) {
+	t.Parallel()
+	// Allowlist intersected with exclude: enabled = {todos, users},
+	// excluded = {users} → only todos migrates.
+	p := mustNew(t,
+		WithEnabledDomains("todos", "users"),
+		WithExcludedDomains("users"),
+	)
+	if got := p.domainFor(todoSchema); got != (domain{Raw: "todos", Pkg: "todos"}) {
+		t.Errorf("todos must migrate, got %+v", got)
+	}
+	if got := p.domainFor(userSchema); !got.IsZero() {
+		t.Errorf("excluded users must return zero domain, got %+v", got)
+	}
+}
+
+func TestDomainFor_ExcludeMatchesRawName(t *testing.T) {
+	t.Parallel()
+	// Symmetric to TestDomainFor_AllowlistMatchesRawName — exclude uses
+	// the raw on-disk name, normalized form does not match.
+	p := mustNew(t, WithExcludedDomains("business-process"))
+	got := p.domainFor("/abs/graph/schema/business-process/x.graphqls")
+	if !got.IsZero() {
+		t.Errorf("expected zero domain when raw name matches exclude, got %+v", got)
+	}
+	p2 := mustNew(t, WithExcludedDomains("businessprocess"))
+	got2 := p2.domainFor("/abs/graph/schema/business-process/x.graphqls")
+	if got2 != (domain{Raw: "business-process", Pkg: "businessprocess"}) {
+		t.Errorf("normalized name in exclude must not match raw dir, got %+v", got2)
+	}
+}
+
+func TestDomainFor_EmptyExcludeIsNoOp(t *testing.T) {
+	t.Parallel()
+	p := mustNew(t, WithExcludedDomains())
+	if got := p.domainFor(todoSchema); got != (domain{Raw: "todos", Pkg: "todos"}) {
+		t.Errorf("empty exclude must not block migration, got %+v", got)
+	}
+}
+
+func TestWithExcludedDomains_KeepsRawNamesAndDedup(t *testing.T) {
+	t.Parallel()
+	p := mustNew(t, WithExcludedDomains("todos", "todos", "with-dash", ""))
+	if len(p.excludedSet) != 2 {
+		t.Errorf("expected 2 unique entries, got %d: %v", len(p.excludedSet), p.excludedSet)
+	}
+	if !p.excludedSet["todos"] || !p.excludedSet["with-dash"] {
+		t.Errorf("missing expected entries: %v", p.excludedSet)
+	}
+	if _, ok := p.excludedSet[""]; ok {
+		t.Errorf("empty entry must not be added: %v", p.excludedSet)
+	}
+}
+
+func TestWithExcludedDomains_MultipleCallsMerge(t *testing.T) {
+	t.Parallel()
+	p := mustNew(t, WithExcludedDomains("todos"), WithExcludedDomains("users"))
+	if !p.excludedSet["todos"] || !p.excludedSet["users"] {
+		t.Errorf("expected both options to merge, got %v", p.excludedSet)
+	}
+}
+
 func TestDomainFor_NoOptionsMigratesEverything(t *testing.T) {
 	t.Parallel()
 	// Greenfield default: New() with no options migrates every domain.

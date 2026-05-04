@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 While the major version is `0`, the public API is allowed to break between
 minor versions; breaking changes will be called out explicitly here.
 
+## [Unreleased]
+
+### Added
+- `WithExcludedDomains(domains ...string)` — denylist keyed by raw
+  schema-directory names. Excluded domains stay in the root resolver
+  package. Combinable with `WithEnabledDomains` (allowlist first, then
+  exclude subtracts) or used standalone with the greenfield default for a
+  "migrate everything except these" configuration. Fails codegen on names
+  that don't match any schema directory, mirroring `WithEnabledDomains`.
+
 ## [0.1.0] - 2026-05-04
 
 Initial release.

@@ -323,6 +323,39 @@ each new domain folder is a separate PR following Step 3.
 
 ---
 
+### Inverting the allowlist for large projects
+
+For projects with dozens of domains where most are ready to migrate but a
+few large or in-flight ones aren't, maintaining an ever-growing
+`WithEnabledDomains(...)` list becomes noisy. Once the migration has covered
+"almost everything", flip the configuration to a denylist:
+
+```go
+plugin, err := gqldomainresolver.New(
+    gqldomainresolver.WithExcludedDomains(
+        "billing",       // mid-flight refactor, blocked on team X
+        "legacy-import", // scheduled for deletion in Q3
+    ),
+)
+```
+
+This switches the plugin to greenfield-with-exceptions: every domain not in
+the list is migrated automatically, including newly added ones. The
+remaining holdouts get migrated by deleting their entry from
+`WithExcludedDomains` (one PR per removed entry — same review cadence as
+adding to the allowlist).
+
+`WithEnabledDomains` and `WithExcludedDomains` can also be combined: the
+allowlist is applied first, then the exclude list subtracts. Useful for
+temporarily parking a single domain out of an already-enabled set without
+rewriting the allowlist. Both lists fail codegen on names that don't match
+any schema directory, so typos surface loudly in either mode.
+
+The choice of mode is a one-way switch in spirit, not in code: flip when
+the list of excluded domains becomes shorter than the list of enabled ones.
+
+---
+
 ## Step 5 — Drop the allowlist
 
 Once every domain (or every domain you intend to migrate) has been moved,

@@ -27,6 +27,12 @@ const DefaultKeywordPrefix = "gql"
 // no-op — useful as a bootstrap step in a migration so the plugin can be
 // wired up without producing any diff.
 //
+// To exclude specific domains from migration — typically large or
+// experimental domains that aren't ready to move yet — pass
+// WithExcludedDomains. It can be combined with WithEnabledDomains: the
+// allowlist is applied first, then the exclude list subtracts from the
+// result.
+//
 // Plugin is not safe for concurrent use. Construct one instance per
 // api.Generate() call; gqlgen runs single-threaded today, but Implement()
 // mutates internal state and parallel codegen would race.
@@ -38,6 +44,12 @@ type Plugin struct {
 	// migrated (greenfield default). A non-nil empty map means "explicit
 	// empty allowlist" → no domain is migrated (migration bootstrap).
 	enabledSet map[string]bool
+
+	// excludedSet is keyed by the *raw* schema directory name, mirroring
+	// enabledSet. nil means "WithExcludedDomains was never called". Domains
+	// in this set are never migrated, even if they pass the enabledSet
+	// check; the exclude list is applied after the allowlist.
+	excludedSet map[string]bool
 
 	// keywordPrefix disambiguates domain names that would otherwise be
 	// invalid Go identifiers (Go keywords, "schema", names starting with
@@ -78,6 +90,35 @@ func WithEnabledDomains(domains ...string) Option {
 				continue
 			}
 			p.enabledSet[d] = true
+		}
+	}
+}
+
+// WithExcludedDomains excludes the listed schema-directory names from
+// migration. Like WithEnabledDomains, names are matched against the *raw*
+// directory name (case-sensitive); duplicates are deduplicated and empty
+// entries are dropped.
+//
+// Names that don't correspond to any directory in the schema cause codegen to
+// fail with a clear error — mirrors WithEnabledDomains so typos surface
+// loudly rather than degrading to a silent no-op.
+//
+// Can be combined with WithEnabledDomains: the allowlist is applied first,
+// then the exclude list subtracts from the result. Used standalone (without
+// WithEnabledDomains) it is the natural fit for a project that wants to
+// migrate every domain *except* a known large or in-flight one — pair it
+// with the greenfield default. WithExcludedDomains() with no arguments is
+// allowed but a no-op.
+func WithExcludedDomains(domains ...string) Option {
+	return func(p *Plugin) {
+		if p.excludedSet == nil {
+			p.excludedSet = map[string]bool{}
+		}
+		for _, d := range domains {
+			if d == "" {
+				continue
+			}
+			p.excludedSet[d] = true
 		}
 	}
 }
@@ -157,20 +198,25 @@ func (p *Plugin) domainFor(schemaPath string) domain {
 	if p.enabledSet != nil && !p.enabledSet[d.Raw] {
 		return domain{}
 	}
+	if p.excludedSet[d.Raw] {
+		return domain{}
+	}
 
 	return d
 }
 
-// validateAllowlist fails codegen if WithEnabledDomains lists a name that
-// does not appear as a raw schema-directory in the schema. Catches typos and
-// case mismatches ("Todos" vs "todos") that previously degraded silently to
-// "domain not migrated".
+// validateAllowlist fails codegen if WithEnabledDomains or
+// WithExcludedDomains list a name that does not appear as a raw
+// schema-directory in the schema. Catches typos and case mismatches
+// ("Todos" vs "todos") that would otherwise degrade silently — for
+// allowlist entries to "domain not migrated", for exclude entries to
+// "exclusion has no effect".
 //
-// nil enabledSet (greenfield default) and an explicit empty allowlist
-// (migration bootstrap) are both passes — the loop over the allowlist is
-// empty in those cases.
+// nil sets (option not used) and explicit empty sets (option called with
+// no arguments) are both passes — the loop over the set is empty in those
+// cases.
 func (p *Plugin) validateAllowlist(data *codegen.Data) error {
-	if p.enabledSet == nil {
+	if p.enabledSet == nil && p.excludedSet == nil {
 		return nil
 	}
 	seen := map[string]bool{}
@@ -185,8 +231,16 @@ func (p *Plugin) validateAllowlist(data *codegen.Data) error {
 			}
 		}
 	}
+	if err := unknownDomainsError("WithEnabledDomains", p.enabledSet, seen); err != nil {
+		return err
+	}
+
+	return unknownDomainsError("WithExcludedDomains", p.excludedSet, seen)
+}
+
+func unknownDomainsError(option string, set, seen map[string]bool) error {
 	var unknown []string
-	for raw := range p.enabledSet {
+	for raw := range set {
 		if !seen[raw] {
 			unknown = append(unknown, raw)
 		}
@@ -200,7 +254,7 @@ func (p *Plugin) validateAllowlist(data *codegen.Data) error {
 		quoted[i] = fmt.Sprintf("%q", u)
 	}
 
-	return fmt.Errorf("gqldomainresolver: WithEnabledDomains references domains not present in the schema: %s — check spelling and case (the raw directory name as on disk)", strings.Join(quoted, ", "))
+	return fmt.Errorf("gqldomainresolver: %s references domains not present in the schema: %s — check spelling and case (the raw directory name as on disk)", option, strings.Join(quoted, ", "))
 }
 
 var _ interface {
