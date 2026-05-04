@@ -2,6 +2,7 @@ package gqldomainresolver
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -264,10 +265,10 @@ func helper() string {
 	if got == "" {
 		t.Fatal("expected helper source, got empty")
 	}
-	if !contains(got, "func helper()") {
+	if !strings.Contains(got, "func helper()") {
 		t.Errorf("remaining source missing helper(): %s", got)
 	}
-	if contains(got, "func (r *TodoResolver) User") {
+	if strings.Contains(got, "func (r *TodoResolver) User") {
 		t.Errorf("claimed method should not be in remaining source: %s", got)
 	}
 }
@@ -286,13 +287,4 @@ func helper() {}
 	if got := rw.remainingFuncs(filepath.Join(dir, "missing.go")); got != "" {
 		t.Errorf("expected empty for missing file, got %q", got)
 	}
-}
-
-func contains(haystack, needle string) bool {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }

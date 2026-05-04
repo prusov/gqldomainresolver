@@ -31,6 +31,9 @@ type astRewriter struct {
 
 // newASTRewriter parses all .go files in dir using ParseFile (ParseDir is deprecated).
 // Returns nil with an error if the directory does not exist or contains no Go files.
+//
+// All map keys are absolute paths (computed once here) so fileFor can do a
+// single map lookup without re-canonicalizing on every call.
 func newASTRewriter(dir string) (*astRewriter, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -45,11 +48,15 @@ func newASTRewriter(dir string) (*astRewriter, error) {
 			continue
 		}
 		filename := filepath.Join(dir, entry.Name())
-		f, parseErr := gparser.ParseFile(fset, filename, nil, 0)
+		abs, err := filepath.Abs(filename)
+		if err != nil {
+			continue
+		}
+		f, parseErr := gparser.ParseFile(fset, abs, nil, 0)
 		if parseErr != nil {
 			continue // skip files that don't parse (e.g. partially written)
 		}
-		files[filename] = f
+		files[abs] = f
 	}
 
 	if len(files) == 0 {
@@ -114,20 +121,12 @@ func (rw *astRewriter) existingImports(outFile string) []importSpec {
 
 // fileFor returns the parsed AST for outFile.
 func (rw *astRewriter) fileFor(outFile string) *goast.File {
-	target, err := filepath.Abs(outFile)
+	abs, err := filepath.Abs(outFile)
 	if err != nil {
 		return nil
 	}
-	for filename, file := range rw.files {
-		abs, err := filepath.Abs(filename)
-		if err != nil || abs != target {
-			continue
-		}
 
-		return file
-	}
-
-	return nil
+	return rw.files[abs]
 }
 
 // remainingFuncs returns the source of all FuncDecl declarations in outFile that
