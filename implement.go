@@ -9,7 +9,7 @@ import (
 // Implement is called by resolvergen for each resolver field.
 // Returns the method body string written into .resolvers.go in the root package.
 //
-// Returning "" signals the safety-net template (graph/templates/resolver.gotpl)
+// Returning "" signals the safety-net template (resolver.gotpl)
 // to skip emitting a method declaration entirely. We rely on Go method promotion:
 // each wrapper (mutationResolver / queryResolver / subscriptionResolver) embeds
 // the kind-specific DomainMutationResolvers / DomainQueryResolvers /

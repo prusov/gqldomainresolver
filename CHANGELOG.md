@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Moved the safety-net resolver template from `templates/resolver.gotpl` to
+  the repository root (`resolver.gotpl`) and embedded it via `//go:embed`,
+  so `go mod vendor` includes the file in the vendor tree. Users can now
+  point `resolver_template` at
+  `vendor/github.com/prusov/gqldomainresolver/resolver.gotpl` directly
+  instead of copying the file into their repo.
+
+### Breaking
+- Anyone copying the template out of the module cache must update the path
+  from `templates/resolver.gotpl` to `resolver.gotpl`.
+
 ## [1.0.0] - 2026-05-04
 
 Initial release.

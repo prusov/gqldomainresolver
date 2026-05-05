@@ -105,20 +105,27 @@ no domain, so the existing `graph/resolver/**` is unchanged.
    > default). With the option but no arguments it is a no-op. This
    > distinction is the foundation of incremental migration.
 
-3. Copy the safety-net template from this module into your repo and point
-   `gqlgen.yml` at the local copy:
-
-   ```bash
-   cp "$(go env GOMODCACHE)"/github.com/prusov/gqldomainresolver@*/templates/resolver.gotpl \
-      cmd/gqlgen/resolver.gotpl
-   ```
+3. Point `gqlgen.yml` at the safety-net template shipped with this module.
+   The template is embedded in the package, so `go mod vendor` brings it
+   into the vendor tree:
 
    ```yaml
    resolver:
      layout: follow-schema
      dir: graph/resolver
      package: resolver
-     resolver_template: cmd/gqlgen/resolver.gotpl
+     resolver_template: vendor/github.com/prusov/gqldomainresolver/resolver.gotpl
+   ```
+
+   If you don't vendor, copy the file out of the module cache and commit it:
+
+   ```bash
+   cp "$(go env GOMODCACHE)"/github.com/prusov/gqldomainresolver@*/resolver.gotpl \
+      cmd/gqlgen/resolver.gotpl
+   ```
+
+   ```yaml
+   resolver_template: cmd/gqlgen/resolver.gotpl
    ```
 
 4. Run code generation. The expected diff is purely structural:

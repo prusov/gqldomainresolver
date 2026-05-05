@@ -1,12 +1,21 @@
 package gqldomainresolver
 
 import (
+	_ "embed"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/99designs/gqlgen/codegen"
 )
+
+// resolverTemplate ensures resolver.gotpl is included by `go mod vendor`,
+// so consumers can point gqlgen's resolver_template at
+// vendor/github.com/prusov/gqldomainresolver/resolver.gotpl directly
+// instead of copying the file into their repo.
+//
+//go:embed resolver.gotpl
+var resolverTemplate string
 
 // DefaultKeywordPrefix is the prefix used by normalizeDomain when a domain
 // name collides with a Go keyword, equals "schema", or starts with a digit.
