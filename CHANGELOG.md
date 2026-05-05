@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-05-05
+
 ### Changed
 - Moved the safety-net resolver template from `templates/resolver.gotpl` to
   the repository root (`resolver.gotpl`) and embedded it via `//go:embed`,
