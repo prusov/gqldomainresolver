@@ -15,7 +15,7 @@ import (
 // instead of copying the file into their repo.
 //
 //go:embed resolver.gotpl
-var resolverTemplate string
+var resolverTemplate string //nolint:unused // referenced only by //go:embed to pull resolver.gotpl into go mod vendor
 
 // DefaultKeywordPrefix is the prefix used by normalizeDomain when a domain
 // name collides with a Go keyword, equals "schema", or starts with a digit.
