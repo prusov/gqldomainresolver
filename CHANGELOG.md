@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The plugin now injects its own safety-net resolver template via gqlgen's
+  `ConfigMutator` hook, materializing the embedded `resolver.gotpl` to a
+  temp file at codegen time. Consumers no longer need to set
+  `resolver_template` in `gqlgen.yml` or rely on `go mod vendor` /
+  module-cache copies to surface the file at a stable path. Setting
+  `resolver_template` explicitly is still honoured and overrides the
+  bundled template, so existing configurations keep working unchanged.
+
+### Migration
+- Existing consumers can drop
+  `resolver_template: vendor/github.com/prusov/gqldomainresolver/resolver.gotpl`
+  (or any other path that points at the bundled template) from `gqlgen.yml`.
+
 ## [1.0.2] - 2026-05-05
 
 ### Changed

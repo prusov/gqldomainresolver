@@ -1,10 +1,12 @@
 package gqldomainresolver
 
 import (
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/99designs/gqlgen/codegen"
+	"github.com/99designs/gqlgen/codegen/config"
 )
 
 func dataWithObjects(objs ...*codegen.Object) *codegen.Data {
@@ -317,6 +319,38 @@ func TestNew_InvalidPrefixReturnsError(t *testing.T) {
 				t.Errorf("expected nil plugin for prefix %q, got %+v", c, p)
 			}
 		})
+	}
+}
+
+func TestMutateConfig_InjectsEmbeddedTemplate(t *testing.T) {
+	t.Parallel()
+	p := mustNew(t)
+	cfg := &config.Config{}
+	if err := p.MutateConfig(cfg); err != nil {
+		t.Fatalf("MutateConfig: %v", err)
+	}
+	if cfg.Resolver.ResolverTemplate == "" {
+		t.Fatal("expected ResolverTemplate to be set")
+	}
+	got, err := os.ReadFile(cfg.Resolver.ResolverTemplate)
+	if err != nil {
+		t.Fatalf("read injected template: %v", err)
+	}
+	if string(got) != resolverTemplate {
+		t.Errorf("injected template content does not match embedded resolverTemplate")
+	}
+}
+
+func TestMutateConfig_RespectsExistingTemplate(t *testing.T) {
+	t.Parallel()
+	p := mustNew(t)
+	const custom = "custom/path/resolver.gotpl"
+	cfg := &config.Config{Resolver: config.ResolverConfig{ResolverTemplate: custom}}
+	if err := p.MutateConfig(cfg); err != nil {
+		t.Fatalf("MutateConfig: %v", err)
+	}
+	if cfg.Resolver.ResolverTemplate != custom {
+		t.Errorf("expected ResolverTemplate to be left untouched, got %q", cfg.Resolver.ResolverTemplate)
 	}
 }
 

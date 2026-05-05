@@ -50,8 +50,10 @@
 //	    log.Fatal(err)
 //	}
 //
-// gqlgen.yml must point resolver_template at the safety-net template shipped
-// alongside this plugin so non-migrated fields still get a panic stub.
+// The plugin injects its own safety-net resolver template via gqlgen's
+// ConfigMutator hook, so non-migrated fields get a panic stub without any
+// resolver_template entry in gqlgen.yml. Setting resolver_template
+// explicitly is still honoured and overrides the bundled template.
 //
 // See the package README for a full integration walkthrough.
 package gqldomainresolver

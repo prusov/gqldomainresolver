@@ -71,11 +71,12 @@ func main() {
 `New()` with no options migrates every domain in the schema. New domains
 added later are picked up automatically.
 
-### 3. Point `resolver_template` at the safety-net template
+### 3. Configure `gqlgen.yml`
 
-gqlgen reads `resolver_template` from the local filesystem — a Go module
-path won't work. The template is embedded in the package, so `go mod vendor`
-copies it into your vendor tree and you can reference it directly:
+The plugin ships its own safety-net resolver template and injects it into
+gqlgen automatically — no `resolver_template` entry is required, and the
+build no longer depends on `go mod vendor` or copying files out of the
+module cache.
 
 ```yaml
 # gqlgen.yml
@@ -83,24 +84,10 @@ resolver:
   layout: follow-schema
   dir: graph/resolver
   package: resolver
-  resolver_template: vendor/github.com/prusov/gqldomainresolver/resolver.gotpl
 ```
 
-If you don't vendor, copy the file out of the module cache and commit it:
-
-```bash
-cp "$(go env GOMODCACHE)"/github.com/prusov/gqldomainresolver@*/resolver.gotpl \
-   cmd/gqlgen/resolver.gotpl
-```
-
-```yaml
-resolver_template: cmd/gqlgen/resolver.gotpl
-```
-
-With the vendor approach, `go mod vendor` keeps the template in sync with
-the module version automatically. With the copy approach, re-copy after
-upgrading the module — an out-of-date copy is the most common source of
-mismatched output.
+Setting `resolver_template` explicitly is still honoured if you need a
+custom template; the plugin yields to your override.
 
 ### 4. Write the root `Resolver` struct once
 

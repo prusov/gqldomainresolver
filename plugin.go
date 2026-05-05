@@ -3,19 +3,20 @@ package gqldomainresolver
 import (
 	_ "embed"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/99designs/gqlgen/codegen"
+	"github.com/99designs/gqlgen/codegen/config"
 )
 
-// resolverTemplate ensures resolver.gotpl is included by `go mod vendor`,
-// so consumers can point gqlgen's resolver_template at
-// vendor/github.com/prusov/gqldomainresolver/resolver.gotpl directly
-// instead of copying the file into their repo.
+// resolverTemplate is the safety-net resolver template the plugin injects
+// into gqlgen via MutateConfig. Embedded so it travels with the package and
+// works in both vendored and non-vendored module modes.
 //
 //go:embed resolver.gotpl
-var resolverTemplate string //nolint:unused // referenced only by //go:embed to pull resolver.gotpl into go mod vendor
+var resolverTemplate string
 
 // DefaultKeywordPrefix is the prefix used by normalizeDomain when a domain
 // name collides with a Go keyword, equals "schema", or starts with a digit.
@@ -266,7 +267,39 @@ func unknownDomainsError(option string, set, seen map[string]bool) error {
 	return fmt.Errorf("gqldomainresolver: %s references domains not present in the schema: %s — check spelling and case (the raw directory name as on disk)", option, strings.Join(quoted, ", "))
 }
 
+// MutateConfig materializes the embedded safety-net resolver template to a
+// temp file and points cfg.Resolver.ResolverTemplate at it, so consumers do
+// not need to set resolver_template themselves or rely on `go mod vendor`
+// to surface the file at a stable path.
+//
+// An explicit cfg.Resolver.ResolverTemplate set by the consumer is left
+// untouched — the plugin yields to a custom template path.
+//
+// The temp file is intentionally not cleaned up: codegen is a short-lived
+// process, the plugin cannot observe the end of api.Generate, and the OS
+// rotates /tmp on its own. Not worth complicating the lifecycle for.
+func (p *Plugin) MutateConfig(cfg *config.Config) error {
+	if cfg.Resolver.ResolverTemplate != "" {
+		return nil
+	}
+	f, err := os.CreateTemp("", "gqldomainresolver-*.gotpl")
+	if err != nil {
+		return fmt.Errorf("gqldomainresolver: create temp template: %w", err)
+	}
+	if _, err := f.WriteString(resolverTemplate); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("gqldomainresolver: write temp template: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("gqldomainresolver: close temp template: %w", err)
+	}
+	cfg.Resolver.ResolverTemplate = f.Name()
+
+	return nil
+}
+
 var _ interface {
 	Implement(string, *codegen.Field) string
 	GenerateCode(*codegen.Data) error
+	MutateConfig(*config.Config) error
 } = (*Plugin)(nil)
